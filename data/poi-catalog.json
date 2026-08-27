@@ -1,0 +1,53 @@
+{
+  "$comment": "Standalone POI category catalog. No OSM tags are hard-coded in app code — search/pois.ts compiles this into an Overpass query at runtime. Each `match` entry is a set of OSM key=value pairs ANDed together; entries in the array are ORed. `modes` limits which travel modes surface the category. `weight` nudges ranking (1 = neutral). `cap` limits how many of a category survive per search (named ones kept first) so plentiful categories like parking can't crowd out viewpoints.",
+  "categories": [
+    {
+      "id": "viewpoint",
+      "label": "Viewpoint",
+      "match": [{ "tourism": "viewpoint" }],
+      "modes": ["walk", "bike", "drive"],
+      "weight": 1.0,
+      "cap": 150
+    },
+    {
+      "id": "peak",
+      "label": "Peak",
+      "match": [{ "natural": "peak" }],
+      "modes": ["walk", "bike", "drive"],
+      "weight": 0.9,
+      "cap": 100
+    },
+    {
+      "id": "picnic",
+      "label": "Picnic site",
+      "match": [{ "tourism": "picnic_site" }],
+      "modes": ["walk", "bike", "drive"],
+      "weight": 0.7,
+      "cap": 60
+    },
+    {
+      "id": "park",
+      "label": "Park",
+      "match": [{ "leisure": "park" }],
+      "modes": ["walk", "bike"],
+      "weight": 0.5,
+      "cap": 40
+    },
+    {
+      "id": "trailhead",
+      "label": "Trailhead",
+      "match": [{ "highway": "trailhead" }],
+      "modes": ["bike", "drive"],
+      "weight": 0.6,
+      "cap": 60
+    },
+    {
+      "id": "parking",
+      "label": "Parking / pull-off",
+      "match": [{ "amenity": "parking" }],
+      "modes": ["drive"],
+      "weight": 0.4,
+      "cap": 40
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "$comment": "Standalone landcover scoring rules. The DEM is a surface model: distant forest correctly blocks sightlines, but a candidate standing *inside* forest reads as standing on the canopy. search/landcover.ts samples the basemap's vector landcover layer at each ranked candidate and applies these rules. Named POIs skip penalties (a mapped viewpoint in forest is usually a cleared overlook). Keys are OpenMapTiles landcover `class` values.",
+  "sourceLayer": "landcover",
+  "classes": {
+    "wood": { "scoreDelta": -1.5, "flag": "In forest — view likely blocked unless there's a clearing" },
+    "forest": { "scoreDelta": -1.5, "flag": "In forest — view likely blocked unless there's a clearing" },
+    "grass": { "scoreDelta": 0.15 },
+    "grassland": { "scoreDelta": 0.15 },
+    "farmland": { "scoreDelta": 0.15 },
+    "sand": { "scoreDelta": 0.25 },
+    "rock": { "scoreDelta": 0.2 },
+    "ice": { "scoreDelta": 0.15 },
+    "wetland": { "scoreDelta": 0 }
+  }
+}

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta
+      name="description"
+      content="Find the best spot near you to watch the sun or moon rise and set — worldwide, powered by open data."
+    />
+    <title>Horizon — best sun &amp; moon rise/set spots near you</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='8' fill='%23eda100'/%3E%3Crect x='2' y='16' width='28' height='14' fill='%232a78d6'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <div id="map"></div>
+
+    <header id="topbar">
+      <span id="brand">Horizon</span>
+      <input id="date" type="date" aria-label="Date to plan for" />
+      <nav id="events" aria-label="Event picker"></nav>
+    </header>
+
+    <section id="panel">
+      <div id="panel-controls">
+        <div id="modes" role="group" aria-label="Travel mode">
+          <button data-mode="walk">Walk</button>
+          <button data-mode="bike">Bike</button>
+          <button data-mode="drive" class="active">Drive</button>
+        </div>
+        <label id="radius-row">
+          <input id="radius" type="range" min="1" max="40" step="1" value="25" />
+          <span id="radius-value">25 km</span>
+        </label>
+        <button id="go">Find spots</button>
+      </div>
+      <div id="status" role="status"></div>
+      <div id="results"></div>
+      <footer id="credits">
+        Map © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>
+        contributors · Terrain:
+        <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">Mapzen/AWS Open Data</a>
+        (SRTM, NASA/USGS, ETOPO1 &amp; others) · POIs via Overpass API
+      </footer>
+    </section>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

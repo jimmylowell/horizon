@@ -1,0 +1,128 @@
+/** Sun/moon rise & set events via astronomy-engine (MIT, worldwide, offline). */
+
+import {
+  AstroTime,
+  Body,
+  Equator,
+  Horizon,
+  Illumination,
+  Observer,
+  SearchAltitude,
+  SearchRiseSet,
+} from "astronomy-engine";
+
+export type EventKind = "sunrise" | "sunset" | "moonrise" | "moonset";
+
+export const EVENT_KINDS: EventKind[] = ["sunrise", "sunset", "moonrise", "moonset"];
+
+export interface SkyEvent {
+  kind: EventKind;
+  time: Date;
+  /** Azimuth of the body at event time, degrees clockwise from north. */
+  azimuthDeg: number;
+  /** Moon illumination fraction (0..1) for moon events. */
+  moonIllumination?: number;
+}
+
+function bodyOf(kind: EventKind): Body {
+  return kind.startsWith("sun") ? Body.Sun : Body.Moon;
+}
+
+function directionOf(kind: EventKind): 1 | -1 {
+  return kind.endsWith("rise") ? 1 : -1;
+}
+
+function azimuthAt(body: Body, time: AstroTime, obs: Observer): number {
+  const eq = Equator(body, time, obs, true, true);
+  return Horizon(time, obs, eq.ra, eq.dec, "normal").azimuth;
+}
+
+/** Next occurrence of each event kind after `from`, at the given location. */
+export function nextEvents(
+  lat: number,
+  lon: number,
+  from: Date = new Date()
+): Partial<Record<EventKind, SkyEvent>> {
+  const obs = new Observer(lat, lon, 0);
+  const out: Partial<Record<EventKind, SkyEvent>> = {};
+  for (const kind of EVENT_KINDS) {
+    const body = bodyOf(kind);
+    const t = SearchRiseSet(body, obs, directionOf(kind), from, 2);
+    if (!t) continue;
+    const ev: SkyEvent = {
+      kind,
+      time: t.date,
+      azimuthDeg: azimuthAt(body, t, obs),
+    };
+    if (body === Body.Moon) {
+      ev.moonIllumination = Illumination(Body.Moon, t).phase_fraction;
+    }
+    out[kind] = ev;
+  }
+  return out;
+}
+
+export interface GoldenHourSpan {
+  start: Date;
+  end: Date;
+  /** Sun azimuth at span start/end, degrees clockwise from north. */
+  startAzDeg: number;
+  endAzDeg: number;
+}
+
+/**
+ * Golden hour around a sun event (sun altitude between +6° and −4°); the
+ * azimuth swing between the two crossings is what gets drawn on the map.
+ * Null for moon events or when a crossing isn't found (high latitudes).
+ */
+export function goldenHourSpan(
+  kind: EventKind,
+  lat: number,
+  lon: number,
+  eventTime: Date
+): GoldenHourSpan | null {
+  if (!kind.startsWith("sun")) return null;
+  const obs = new Observer(lat, lon, 0);
+  const dir = directionOf(kind);
+  const from = new Date(eventTime.getTime() - 3 * 3600_000);
+  const hi = SearchAltitude(Body.Sun, obs, dir, from, 0.5, 6);
+  const lo = SearchAltitude(Body.Sun, obs, dir, from, 0.5, -4);
+  if (!hi || !lo) return null;
+  // Rising sweeps −4°→+6°; setting sweeps +6°→−4°.
+  const [first, last] = dir === 1 ? [lo, hi] : [hi, lo];
+  return {
+    start: first.date,
+    end: last.date,
+    startAzDeg: azimuthAt(Body.Sun, first, obs),
+    endAzDeg: azimuthAt(Body.Sun, last, obs),
+  };
+}
+
+/** Event time recomputed at a specific spot (differs slightly by location). */
+export function eventTimeAt(kind: EventKind, lat: number, lon: number, near: Date): Date | null {
+  const obs = new Observer(lat, lon, 0);
+  const start = new Date(near.getTime() - 6 * 3600_000);
+  const t = SearchRiseSet(bodyOf(kind), obs, directionOf(kind), start, 1);
+  return t ? t.date : null;
+}
+
+/**
+ * When the body actually appears/disappears given a terrain obstruction angle:
+ * the altitude crossing of `obstructionDeg` nearest the geometric event.
+ * Returns null when unobstructed or not found.
+ */
+export function obstructedEventTime(
+  kind: EventKind,
+  lat: number,
+  lon: number,
+  eventTime: Date,
+  obstructionDeg: number
+): Date | null {
+  if (obstructionDeg <= 0.05) return null;
+  const obs = new Observer(lat, lon, 0);
+  const dir = directionOf(kind);
+  // Rising: body clears the ridge after geometric rise. Setting: it vanishes before.
+  const start = new Date(eventTime.getTime() - (dir === 1 ? 0.5 : 6) * 3600_000);
+  const t = SearchAltitude(bodyOf(kind), obs, dir, start, 0.5, obstructionDeg);
+  return t ? t.date : null;
+}

@@ -1,0 +1,23 @@
+{
+  "$comment": "Standalone catalog of OSM features that can name the skyline a rise/set happens behind. search/horizonFeature.ts compiles this into an Overpass query at runtime — no OSM tags are hard-coded in app code. Categories are tried in array order (first category with a hit wins); `match` entries are key=value pairs ANDed together, array entries ORed. `searchRadiusM` is how far from the ray-marched horizon point a named feature may sit and still claim it — the DEM horizon lands on a ridge line, while the named summit is often a little way along it.",
+  "categories": [
+    {
+      "id": "peak",
+      "label": "peak",
+      "match": [{ "natural": "peak" }, { "natural": "volcano" }],
+      "searchRadiusM": 3000
+    },
+    {
+      "id": "ridge",
+      "label": "ridge",
+      "match": [{ "natural": "ridge" }, { "natural": "arete" }],
+      "searchRadiusM": 4000
+    },
+    {
+      "id": "saddle",
+      "label": "saddle",
+      "match": [{ "natural": "saddle" }, { "mountain_pass": "yes" }],
+      "searchRadiusM": 2500
+    }
+  ]
+}
