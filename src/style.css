@@ -176,7 +176,13 @@ body {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+#actions {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
 #go {
+  flex: 1;
   border: none;
   background: var(--accent);
   color: var(--accent-ink);
@@ -184,11 +190,22 @@ body {
   padding: 8px 16px;
   border-radius: 10px;
   cursor: pointer;
-  width: 100%;
 }
 #go:disabled {
   opacity: 0.55;
   cursor: default;
+}
+#clear {
+  border: 1px solid var(--hairline);
+  background: var(--surface-raised);
+  color: var(--text-2);
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+#clear[hidden] {
+  display: none;
 }
 
 #status {
@@ -346,15 +363,45 @@ body {
 }
 
 .origin-marker {
-  width: 16px;
-  height: 16px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   background: #eda100;
   border: 3px solid #ffffff;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  cursor: grab;
+}
+.origin-marker:active {
+  cursor: grabbing;
+}
+
+/* MapLibre corner controls: below the topbar, and above the phone bottom
+   sheet. --topbar-h / --panel-h are measured live (see main.ts). */
+#map .maplibregl-ctrl-top-right,
+#map .maplibregl-ctrl-top-left {
+  top: var(--topbar-h, 56px);
+}
+#map .maplibregl-ctrl-bottom-right,
+#map .maplibregl-ctrl-bottom-left {
+  bottom: var(--panel-h, 0px);
+}
+@media (min-width: 760px) {
+  #map .maplibregl-ctrl-bottom-right,
+  #map .maplibregl-ctrl-bottom-left {
+    bottom: 0;
+  }
+  /* Panel sits bottom-left on wide screens; slide the logo past it. */
+  #map .maplibregl-ctrl-bottom-left {
+    left: 384px;
+  }
 }
 
 .maplibregl-popup-content {
   font: 12px/1.5 system-ui, sans-serif;
   color: #0b0b0b;
+}
+.maplibregl-popup-content a {
+  color: #2a78d6;
+  font-weight: 600;
+  text-decoration: none;
 }

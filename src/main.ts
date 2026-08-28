@@ -15,7 +15,7 @@ import {
 } from "./astro";
 import { destination, flatDistanceM, type LatLon } from "./geo";
 import { ringAzimuths } from "./elevation/horizon";
-import { renderHeatmap, type ScorePoint } from "./render/heatmap";
+import { clearHeatmap, renderHeatmap, type ScorePoint } from "./render/heatmap";
 import { clearSpotMarkers, renderSpotMarkers } from "./render/spots";
 import { gridCandidates, gridSpacingM, type Candidate } from "./search/grid";
 import { nameSkylinePoints, type SkylineFeature } from "./search/horizonFeature";
@@ -76,13 +76,18 @@ function baseTime(): Date {
   return new Date(y, m - 1, d, 0, 0, 0);
 }
 
-// Permalink: #lat,lon,kind,mode,radius
+// Permalink: #lat,lon,kind,mode,radius[,date]
+/** True when the page opened on a shared/bookmarked permalink (auto-searches). */
+let openedFromHash = false;
 function readHash(): void {
   const m = location.hash.slice(1).split(",");
   if (m.length >= 2) {
     const lat = parseFloat(m[0]);
     const lon = parseFloat(m[1]);
-    if (Number.isFinite(lat) && Number.isFinite(lon)) state.loc = { lat, lon };
+    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+      state.loc = { lat, lon };
+      openedFromHash = true;
+    }
     if (m[2] && (EVENT_KINDS as string[]).includes(m[2])) state.kind = m[2] as EventKind;
     if (m[3] && ["walk", "bike", "drive"].includes(m[3])) state.mode = m[3] as TravelMode;
     const r = parseFloat(m[4]);
@@ -121,6 +126,18 @@ geolocate.on("geolocate", (pos) => {
   setLocation({ lat: pos.coords.latitude, lon: pos.coords.longitude }, true);
 });
 
+// Keep MapLibre's corner controls clear of the app chrome: the topbar's height
+// (safe-area inset, wrapping) and the phone bottom sheet's height both vary.
+const topbarEl = document.getElementById("topbar")!;
+const panelEl = document.getElementById("panel")!;
+const chromeObserver = new ResizeObserver(() => {
+  const root = document.documentElement.style;
+  root.setProperty("--topbar-h", `${topbarEl.offsetHeight}px`);
+  root.setProperty("--panel-h", `${panelEl.offsetHeight}px`);
+});
+chromeObserver.observe(topbarEl);
+chromeObserver.observe(panelEl);
+
 const originEl = document.createElement("div");
 originEl.className = "origin-marker";
 originEl.title = "Watch-from area origin (drag to move)";
@@ -133,7 +150,8 @@ originMarker.on("dragend", () => {
 });
 
 // After a search: clicking inside the searched ring inspects the nearest
-// scored point; clicking outside (or before any search) moves the origin.
+// scored point (the popup offers "search from here"); clicking outside, or
+// before any search / after Clear, moves the origin.
 interface LastSearch {
   centre: LatLon;
   radiusM: number;
@@ -141,6 +159,7 @@ interface LastSearch {
   points: ScorePoint[];
 }
 let lastSearch: LastSearch | null = null;
+let inspectPopup: Popup | null = null;
 
 map.on("click", (e) => {
   const click = { lat: e.lngLat.lat, lon: e.lngLat.lng };
@@ -159,14 +178,23 @@ map.on("click", (e) => {
       }
       if (best) {
         const v = verdict(best.obstructionDeg);
-        new Popup({ closeButton: false })
+        inspectPopup?.remove();
+        inspectPopup = new Popup({ closeButton: false })
           .setLngLat(e.lngLat)
           .setHTML(
             `<strong>${v.label}</strong><br>` +
               `Horizon ${(best.horizonDistM / 1000).toFixed(1)} km away · ${formatAngle(best.obstructionDeg)}<br>` +
-              `<a target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${best.lat.toFixed(6)},${best.lon.toFixed(6)}">Directions ↗</a>`
+              `<a target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${best.lat.toFixed(6)},${best.lon.toFixed(6)}">Directions ↗</a>` +
+              ` · <a href="#" class="move-here">Search from here</a>`
           )
           .addTo(map);
+        inspectPopup
+          .getElement()
+          .querySelector<HTMLAnchorElement>(".move-here")
+          ?.addEventListener("click", (evt) => {
+            evt.preventDefault();
+            setLocation(click, false);
+          });
         drawSightline(best, { lat: best.horizonLat, lon: best.horizonLon });
       }
       return;
@@ -189,6 +217,8 @@ const RAY_REACH_M = 120_000;
 /** False when the centre ray ran out at the reach limit without meeting terrain. */
 const hitTerrain = (r: CandidateResult) => r.horizonDistM < RAY_REACH_M * 0.99;
 const AZIMUTH_LAYERS = ["azimuth-golden", "azimuth-spread", "azimuth-lines"];
+/** Vector overlays that must stay readable above the (re-added) score raster. */
+const OVERLAY_LAYERS = [...AZIMUTH_LAYERS, "sightline-line", "sightline-point", "sightline-label"];
 
 function azimuthLine(azDeg: number, kind: EventKind, spread: boolean): Feature {
   const end = destination(state.loc, RAY_REACH_M, azDeg);
@@ -377,6 +407,7 @@ const eventsNav = document.getElementById("events")!;
 const resultsEl = document.getElementById("results")!;
 const statusEl = document.getElementById("status")!;
 const goBtn = document.getElementById("go") as HTMLButtonElement;
+const clearBtn = document.getElementById("clear") as HTMLButtonElement;
 const radiusInput = document.getElementById("radius") as HTMLInputElement;
 const radiusValue = document.getElementById("radius-value")!;
 const modeBtns = [...document.querySelectorAll<HTMLButtonElement>("#modes button")];
@@ -426,7 +457,9 @@ function renderEventPicker(): void {
       `<span class="t">${ev ? dayTimeFmt.format(ev.time) + extra : "—"}</span>`;
     btn.disabled = !ev;
     btn.addEventListener("click", () => {
+      if (kind === state.kind) return;
       state.kind = kind;
+      clearResults(); // results were scored along the old event's azimuth
       renderEventPicker();
       drawAzimuth();
       showEventStatus();
@@ -454,8 +487,26 @@ function refreshEvents(): void {
   showEventStatus();
 }
 
+/** Blank slate: drop everything the last search drew and listed. */
+function clearResults(): void {
+  lastSearch = null;
+  inspectPopup?.remove();
+  inspectPopup = null;
+  clearSpotMarkers();
+  clearSightline();
+  clearHeatmap(map);
+  resultsEl.innerHTML = "";
+  clearBtn.hidden = true;
+}
+
+clearBtn.addEventListener("click", () => {
+  clearResults();
+  showEventStatus();
+});
+
 function setLocation(loc: LatLon, pan: boolean): void {
   state.loc = loc;
+  clearResults(); // results were for the old origin
   originMarker.setLngLat([loc.lon, loc.lat]);
   if (pan) map.flyTo({ center: [loc.lon, loc.lat], zoom: Math.max(map.getZoom(), 10) });
   refreshEvents();
@@ -485,6 +536,7 @@ const dateInput = document.getElementById("date") as HTMLInputElement;
 dateInput.min = todayStr();
 dateInput.addEventListener("change", () => {
   state.date = dateInput.value && dateInput.value !== todayStr() ? dateInput.value : "";
+  clearResults();
   refreshEvents();
   writeHash();
 });
@@ -591,9 +643,7 @@ async function runSearch(): Promise<void> {
 async function search(ev: SkyEvent): Promise<void> {
   // Results draw onto the basemap; a tap before the style has loaded waits for it.
   if (!mapReady) await new Promise<void>((resolve) => map.once("load", () => resolve()));
-  resultsEl.innerHTML = "";
-  clearSpotMarkers();
-  clearSightline();
+  clearResults();
   statusEl.textContent = "Looking up places worth going (OpenStreetMap)…";
 
   const radiusM = state.radiusKm * 1000;
@@ -721,8 +771,8 @@ async function presentResults(
     spacingM: gridSpacingM(radiusM),
     points: heatPoints,
   };
-  // Keep the direction lines readable above the score surface.
-  for (const id of AZIMUTH_LAYERS) {
+  // Keep the direction lines and sightline readable above the score surface.
+  for (const id of OVERLAY_LAYERS) {
     if (map.getLayer(id)) map.moveLayer(id);
   }
 
@@ -847,6 +897,7 @@ async function presentResults(
   }
   const cards = spots.map((s) => spotCard(s, ev));
   for (const card of cards) resultsEl.appendChild(card);
+  clearBtn.hidden = false;
   void annotateSkylines(spots, cards);
 }
 
@@ -982,3 +1033,7 @@ map.on("load", () => {
   mapReady = true;
   drawAzimuth();
 });
+// A shared link should land on results, not a blank slate asking for a tap.
+// The hash restores only the inputs (results are computed live), so run the
+// search the link describes. search() itself waits for the basemap.
+if (openedFromHash) void runSearch();
