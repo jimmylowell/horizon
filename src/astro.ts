@@ -98,6 +98,11 @@ export function goldenHourSpan(
   };
 }
 
+/** Body azimuth at a given instant, degrees clockwise from north. */
+export function azimuthAtTime(kind: EventKind, lat: number, lon: number, when: Date): number {
+  return azimuthAt(bodyOf(kind), new AstroTime(when), new Observer(lat, lon, 0));
+}
+
 /** Event time recomputed at a specific spot (differs slightly by location). */
 export function eventTimeAt(kind: EventKind, lat: number, lon: number, near: Date): Date | null {
   const obs = new Observer(lat, lon, 0);
@@ -125,4 +130,29 @@ export function obstructedEventTime(
   const start = new Date(eventTime.getTime() - (dir === 1 ? 0.5 : 6) * 3600_000);
   const t = SearchAltitude(bodyOf(kind), obs, dir, start, 0.5, obstructionDeg);
   return t ? t.date : null;
+}
+
+export interface ObstructionEffect {
+  /** When the body actually clears / vanishes behind the ridge; null if the horizon is open. */
+  time: Date | null;
+  /** Minutes of the event lost to terrain (0 when open). */
+  lostMin: number;
+}
+
+/**
+ * What a terrain obstruction *means* for a rise/set: not an abstract angle
+ * but minutes late (rising) or minutes early (setting). A 3° ridge costs a
+ * mid-latitude moonrise about 20 minutes; that number is the verdict.
+ */
+export function obstructionEffect(
+  kind: EventKind,
+  lat: number,
+  lon: number,
+  eventTime: Date,
+  obstructionDeg: number
+): ObstructionEffect {
+  const t = obstructedEventTime(kind, lat, lon, eventTime, obstructionDeg);
+  if (!t) return { time: null, lostMin: 0 };
+  const dir = directionOf(kind);
+  return { time: t, lostMin: Math.max(0, Math.round((dir * (t.getTime() - eventTime.getTime())) / 60_000)) };
 }

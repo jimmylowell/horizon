@@ -7,11 +7,20 @@ Two uses, same tool: "it's a nice night — where should I go right now?" and
 basic planning ("where do I watch next week's full moonrise?") via the date
 picker; the URL hash carries location, event, mode, radius, and date for sharing.
 
-The premise: the best views have the most distance between you and the horizon.
-Horizon ray-marches open elevation data along the event's azimuth to find where
-the terrain opens up, ranks real places from OpenStreetMap you can actually go
-(viewpoints, peaks, picnic sites, trailheads, parking), and hands you a
-directions link.
+Two questions, in this order:
+
+1. **From here** — drop the pin where you are (or anywhere) and Horizon
+   ray-marches the terrain toward the event and tells you what it means in
+   minutes: *"Over the ridge ~7:53 PM · az 106° (+20 min)"*, with the sightline
+   to the ridge and its name when OSM has one. No search needed.
+2. **Find spots** — sample points along the roads you can actually stop on
+   (plus mapped viewpoints, peaks, picnic sites, trailheads, parking), score
+   every one the same way, and rank them as *minutes gained vs. where you
+   are*. If nothing in the ring beats your spot, it says so.
+
+The premise: the best views have the most distance between you and the horizon,
+and a few degrees of ridge is not "blocked" — it's a rise that's late or a set
+that's early, and that number is the verdict.
 
 ## How it works
 
@@ -30,9 +39,15 @@ Everything runs in the browser — the app is a static site:
   canyons.
 - **Astronomy:** [astronomy-engine](https://github.com/cosinekitty/astronomy)
   computes rise/set times and azimuths for sun and moon, per location, offline.
+- **Roads:** the Overpass API supplies OSM ways you can stop on (motorway/trunk
+  excluded; residential only at town scale; `access=private|no` skipped),
+  densified into candidates every ~120–600 m depending on the ring and thinned
+  to a ray budget. "Open terrain" picks are therefore roadside by construction.
+  Tracks are flagged as unpaved.
 - **Places:** the Overpass API supplies OSM points of interest. Categories live
   in [data/poi-catalog.json](data/poi-catalog.json) — no OSM tags are hard-coded;
-  edit the JSON to add categories.
+  edit the JSON to add categories. Places far from any mapped road (a remote
+  peak) are dropped in bike/drive modes.
 - **Landcover sanity check:** the DEM is a surface model, so a spot *inside*
   forest reads as standing on the canopy. Rules in
   [data/landcover-rules.json](data/landcover-rules.json) penalize/flag forested
@@ -41,8 +56,10 @@ Everything runs in the browser — the app is a static site:
   [OpenFreeMap](https://openfreemap.org/) (OSM) tiles.
 
 Results render as a diverging score heatmap over your travel ring (red =
-blocked, blue = elevated above the horizon) plus ranked spots — mapped places
-first, best open terrain after (flagged "access unverified").
+blocked, blue = elevated above the horizon) plus ranked spots in one merged
+list — roadside points and mapped places together, each with the time the body
+clears (or drops behind) the ridge and its gain in minutes over your pin. If
+the road lookup is down, raw grid cells stand in, flagged "access unverified".
 
 ## Develop
 

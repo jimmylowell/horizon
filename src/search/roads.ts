@@ -10,7 +10,9 @@
  */
 
 import type { Map as MapLibreMap } from "maplibre-gl";
-import { DEG, type LatLon } from "../geo";
+import { DEG, flatDistanceM, type LatLon } from "../geo";
+import type { Candidate } from "./grid";
+import { overpassJson } from "./overpass";
 import type { TravelMode } from "./pois";
 
 /** OpenMapTiles `transportation.class` values a car can use. */
@@ -142,4 +144,149 @@ export function buildRoadIndex(map: MapLibreMap, mode: TravelMode): RoadIndex | 
  */
 export function roadBandsM(mode: TravelMode): { flag: number; exclude: number } {
   return mode === "bike" ? { flag: 700, exclude: 2000 } : { flag: 1000, exclude: 2500 };
+}
+
+// ---------- roadside candidates (OSM ways via Overpass) ----------
+//
+// "Open terrain is fine as long as it's on a road": instead of scoring an
+// abstract dot grid and filtering by road distance afterwards, sample points
+// *along* the roads you can actually stop on. Every roadside pick is then a
+// pull-off by construction.
+
+/** Highway classes worth stopping on, per travel mode (motorway/trunk: can't stop). */
+const ROAD_CLASSES: Record<TravelMode, string[]> = {
+  drive: ["primary", "secondary", "tertiary", "unclassified", "residential", "track"],
+  bike: ["primary", "secondary", "tertiary", "unclassified", "residential", "track", "cycleway"],
+  walk: [
+    "primary",
+    "secondary",
+    "tertiary",
+    "unclassified",
+    "residential",
+    "living_street",
+    "track",
+    "cycleway",
+    "footway",
+    "path",
+    "pedestrian",
+  ],
+};
+/** Beyond town scale, residential streets are noise (and buildings aren't marched). */
+const RESIDENTIAL_MAX_RADIUS_M = 8000;
+
+const ROAD_LABELS: Record<string, string> = {
+  primary: "Highway",
+  secondary: "Highway",
+  tertiary: "Road",
+  unclassified: "Road",
+  residential: "Street",
+  living_street: "Street",
+  track: "Track",
+  cycleway: "Bike path",
+  footway: "Trail",
+  path: "Trail",
+  pedestrian: "Trail",
+};
+
+export interface RoadWay {
+  id: number;
+  tags: Record<string, string>;
+  geometry: LatLon[];
+}
+
+export interface RoadFetchResult {
+  roads: Candidate[];
+  /** false when every Overpass mirror failed (distinct from "no roads here"). */
+  ok: boolean;
+}
+
+/** Sampling interval scales with the ring so candidate counts stay bounded. */
+export function roadSpacingM(radiusM: number): number {
+  return Math.min(600, Math.max(120, radiusM / 50));
+}
+
+/**
+ * Densify ways into points every `spacingM`, keep those inside the ring, and
+ * thin to at most one point per spacing-sized cell (coarsening until under
+ * `maxCount`). Pure, for testing.
+ */
+export function sampleRoads(
+  ways: RoadWay[],
+  centre: LatLon,
+  radiusM: number,
+  spacingM: number,
+  maxCount: number
+): Candidate[] {
+  const cosLat = Math.cos(centre.lat * DEG);
+  const raw: Candidate[] = [];
+  for (const w of ways) {
+    const cls = w.tags.highway;
+    const g = w.geometry;
+    if (!cls || !g || g.length < 2) continue;
+    const name = w.tags.name ?? w.tags.ref;
+    let carry = 0; // distance since the last emitted point
+    let n = 0;
+    const emit = (p: LatLon) => {
+      if (flatDistanceM(centre, p) > radiusM) return;
+      raw.push({
+        id: `r:${w.id}:${n++}`,
+        source: "road",
+        label: ROAD_LABELS[cls] ?? "Road",
+        name,
+        weight: 1,
+        roadClass: cls,
+        ...p,
+      });
+    };
+    emit(g[0]);
+    for (let i = 1; i < g.length; i++) {
+      const a = g[i - 1];
+      const b = g[i];
+      const seg = flatDistanceM(a, b);
+      let t = spacingM - carry;
+      while (t <= seg) {
+        const f = t / seg;
+        emit({ lat: a.lat + (b.lat - a.lat) * f, lon: a.lon + (b.lon - a.lon) * f });
+        t += spacingM;
+      }
+      carry = seg - (t - spacingM);
+    }
+  }
+
+  // Thin on a grid; named ways first so a junction keeps the signed road.
+  raw.sort((a, b) => Number(!!b.name) - Number(!!a.name));
+  let cell = spacingM;
+  for (;;) {
+    const seen = new Set<string>();
+    const kept: Candidate[] = [];
+    for (const c of raw) {
+      const key = `${Math.floor((c.lat * 111_320) / cell)}:${Math.floor((c.lon * 111_320 * cosLat) / cell)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      kept.push(c);
+    }
+    if (kept.length <= maxCount) return kept;
+    cell *= 1.5;
+  }
+}
+
+/** Roads you can stop on within the ring, sampled into candidates. */
+export async function fetchRoadCandidates(
+  centre: LatLon,
+  radiusM: number,
+  mode: TravelMode,
+  maxCount: number
+): Promise<RoadFetchResult> {
+  const classes = ROAD_CLASSES[mode].filter(
+    (c) => radiusM <= RESIDENTIAL_MAX_RADIUS_M || (c !== "residential" && c !== "living_street")
+  );
+  const query =
+    `[out:json][timeout:25];\n` +
+    `way["highway"~"^(${classes.join("|")})$"]["access"!~"^(private|no)$"]` +
+    `(around:${Math.round(radiusM)},${centre.lat.toFixed(5)},${centre.lon.toFixed(5)});\n` +
+    `out geom qt;`;
+  const json = await overpassJson<{ elements: RoadWay[] }>(query);
+  if (!json) return { roads: [], ok: false };
+  const ways = json.elements.filter((e) => Array.isArray(e.geometry) && e.tags);
+  return { roads: sampleRoads(ways, centre, radiusM, roadSpacingM(radiusM), maxCount), ok: true };
 }

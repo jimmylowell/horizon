@@ -67,16 +67,11 @@ export function opennessDelta(obstructionDeg: number, openness: number): number 
   return 0.4 * obstructionDeg + 3.0 * (openness - 0.5);
 }
 
-export interface Verdict {
-  label: string;
-  /** 0 worst .. 4 best, for styling. */
-  grade: 0 | 1 | 2 | 3 | 4;
-}
-
-export function verdict(obstructionDeg: number): Verdict {
-  if (obstructionDeg <= -0.3) return { label: "Panoramic — you're above the horizon", grade: 4 };
-  if (obstructionDeg <= 0.15) return { label: "Wide open", grade: 3 };
-  if (obstructionDeg <= 0.75) return { label: "Slightly obstructed", grade: 2 };
-  if (obstructionDeg <= 2) return { label: "Obstructed — event cut short", grade: 1 };
-  return { label: "Blocked by terrain", grade: 0 };
+/** Styling grade for minutes of the event lost to terrain: 4 best … 0 worst. */
+export function lostGrade(lostMin: number): 0 | 1 | 2 | 3 | 4 {
+  if (lostMin <= 2) return 4;
+  if (lostMin <= 10) return 3;
+  if (lostMin <= 25) return 2;
+  if (lostMin <= 60) return 1;
+  return 0;
 }

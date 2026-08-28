@@ -5,12 +5,14 @@ import "./style.css";
 
 import {
   EVENT_KINDS,
+  azimuthAtTime,
   eventTimeAt,
   goldenHourSpan,
   nextEvents,
-  obstructedEventTime,
+  obstructionEffect,
   type EventKind,
   type GoldenHourSpan,
+  type ObstructionEffect,
   type SkyEvent,
 } from "./astro";
 import { destination, flatDistanceM, type LatLon } from "./geo";
@@ -21,17 +23,18 @@ import { gridCandidates, gridSpacingM, type Candidate } from "./search/grid";
 import { nameSkylinePoints, type SkylineFeature } from "./search/horizonFeature";
 import { landcoverAt } from "./search/landcover";
 import { fetchPois, type TravelMode } from "./search/pois";
-import { buildRoadIndex, roadBandsM } from "./search/roads";
+import { buildRoadIndex, fetchRoadCandidates, roadBandsM } from "./search/roads";
 import {
   OPEN_SKY_MAX_DEG,
+  lostGrade,
   opennessDelta,
   score,
   skyOpenness,
-  verdict,
   type SkyOpenness,
 } from "./search/score";
 import type {
   CandidateResult,
+  ProbeRequest,
   RingRequest,
   SearchRequest,
   WorkerMessage,
@@ -157,6 +160,7 @@ interface LastSearch {
   radiusM: number;
   spacingM: number;
   points: ScorePoint[];
+  ev: SkyEvent;
 }
 let lastSearch: LastSearch | null = null;
 let inspectPopup: Popup | null = null;
@@ -177,15 +181,18 @@ map.on("click", (e) => {
         }
       }
       if (best) {
-        const v = verdict(best.obstructionDeg);
+        const ev = lastSearch.ev;
+        const eff = obstructionEffect(ev.kind, best.lat, best.lon, ev.time, best.obstructionDeg);
+        const v = effectLabel(ev.kind, eff);
+        const gain = gainVsHere(eff);
         inspectPopup?.remove();
         inspectPopup = new Popup({ closeButton: false })
           .setLngLat(e.lngLat)
           .setHTML(
-            `<strong>${v.label}</strong><br>` +
-              `Horizon ${(best.horizonDistM / 1000).toFixed(1)} km away · ${formatAngle(best.obstructionDeg)}<br>` +
+            `<strong class="g${v.grade}">${v.label}</strong>${gain ? ` <span class="gain ${gain.cls}">${gain.text}</span>` : ""}<br>` +
+              `Ridge ${formatAngle(best.obstructionDeg)}, ${(best.horizonDistM / 1000).toFixed(1)} km away<br>` +
               `<a target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${best.lat.toFixed(6)},${best.lon.toFixed(6)}">Directions ↗</a>` +
-              ` · <a href="#" class="move-here">Search from here</a>`
+              ` · <a href="#" class="move-here">Check from here</a>`
           )
           .addTo(map);
         inspectPopup
@@ -215,10 +222,16 @@ const EVENT_COLORS: Record<EventKind, string> = {
 /** Ray-march reach; the drawn azimuth lines match it. */
 const RAY_REACH_M = 120_000;
 /** False when the centre ray ran out at the reach limit without meeting terrain. */
-const hitTerrain = (r: CandidateResult) => r.horizonDistM < RAY_REACH_M * 0.99;
+const hitTerrain = (r: { horizonDistM: number }) => r.horizonDistM < RAY_REACH_M * 0.99;
 const AZIMUTH_LAYERS = ["azimuth-golden", "azimuth-spread", "azimuth-lines"];
+/** Two sightlines: the origin's own ("here") and the selected spot's. */
+const SIGHTLINE_KEYS = ["here-sightline", "sightline"] as const;
+type SightlineKey = (typeof SIGHTLINE_KEYS)[number];
 /** Vector overlays that must stay readable above the (re-added) score raster. */
-const OVERLAY_LAYERS = [...AZIMUTH_LAYERS, "sightline-line", "sightline-point", "sightline-label"];
+const OVERLAY_LAYERS = [
+  ...AZIMUTH_LAYERS,
+  ...SIGHTLINE_KEYS.flatMap((k) => [`${k}-line`, `${k}-point`, `${k}-label`]),
+];
 
 function azimuthLine(azDeg: number, kind: EventKind, spread: boolean): Feature {
   const end = destination(state.loc, RAY_REACH_M, azDeg);
@@ -328,7 +341,12 @@ function drawAzimuth(): void {
 
 // ---------- sightline (spot → the skyline point the event happens behind) ----------
 
-function drawSightline(from: LatLon, to: LatLon, name?: string | null): void {
+function drawSightline(
+  from: LatLon,
+  to: LatLon,
+  name?: string | null,
+  key: SightlineKey = "sightline"
+): void {
   const color = EVENT_COLORS[state.kind];
   const data: FeatureCollection = {
     type: "FeatureCollection",
@@ -351,22 +369,22 @@ function drawSightline(from: LatLon, to: LatLon, name?: string | null): void {
       },
     ],
   };
-  const src = map.getSource("sightline") as maplibregl.GeoJSONSource | undefined;
+  const src = map.getSource(key) as maplibregl.GeoJSONSource | undefined;
   if (src) {
     src.setData(data);
   } else {
-    map.addSource("sightline", { type: "geojson", data });
+    map.addSource(key, { type: "geojson", data });
     map.addLayer({
-      id: "sightline-line",
+      id: `${key}-line`,
       type: "line",
-      source: "sightline",
+      source: key,
       filter: ["==", ["geometry-type"], "LineString"],
       paint: { "line-width": 2, "line-dasharray": [1.5, 1.5], "line-opacity": 0.85 },
     });
     map.addLayer({
-      id: "sightline-point",
+      id: `${key}-point`,
       type: "circle",
-      source: "sightline",
+      source: key,
       filter: ["==", ["geometry-type"], "Point"],
       paint: {
         "circle-radius": 5,
@@ -375,9 +393,9 @@ function drawSightline(from: LatLon, to: LatLon, name?: string | null): void {
       },
     });
     map.addLayer({
-      id: "sightline-label",
+      id: `${key}-label`,
       type: "symbol",
-      source: "sightline",
+      source: key,
       filter: ["==", ["geometry-type"], "Point"],
       layout: {
         "text-field": ["get", "name"],
@@ -391,19 +409,20 @@ function drawSightline(from: LatLon, to: LatLon, name?: string | null): void {
     });
   }
   // Track the selected event's color (layers persist across event switches).
-  map.setPaintProperty("sightline-line", "line-color", color);
-  map.setPaintProperty("sightline-point", "circle-color", color);
-  map.setPaintProperty("sightline-label", "text-color", color);
+  map.setPaintProperty(`${key}-line`, "line-color", color);
+  map.setPaintProperty(`${key}-point`, "circle-color", color);
+  map.setPaintProperty(`${key}-label`, "text-color", color);
 }
 
-function clearSightline(): void {
-  const src = map.getSource("sightline") as maplibregl.GeoJSONSource | undefined;
+function clearSightline(key: SightlineKey = "sightline"): void {
+  const src = map.getSource(key) as maplibregl.GeoJSONSource | undefined;
   if (src) src.setData({ type: "FeatureCollection", features: [] });
 }
 
 // ---------- UI elements ----------
 
 const eventsNav = document.getElementById("events")!;
+const hereEl = document.getElementById("here")!;
 const resultsEl = document.getElementById("results")!;
 const statusEl = document.getElementById("status")!;
 const goBtn = document.getElementById("go") as HTMLButtonElement;
@@ -431,17 +450,33 @@ function eventLabel(kind: EventKind): string {
 
 function formatAngle(deg: number): string {
   return deg <= 0
-    ? `${Math.abs(deg).toFixed(2)}° dip below flat`
-    : `${deg.toFixed(2)}° terrain obstruction`;
+    ? `${Math.abs(deg).toFixed(1)}° below flat (you're above it)`
+    : `${deg.toFixed(1)}° above flat`;
 }
 
-/** Idle status line: when to be there for the selected event's golden hour. */
-function showEventStatus(): void {
-  if (state.searching) return;
-  const gh = state.golden[state.kind];
-  statusEl.textContent = gh
-    ? `Golden hour ${timeFmt.format(gh.start)}–${timeFmt.format(gh.end)}`
-    : "";
+/**
+ * The verdict, in the unit that matters: minutes of the rise/set lost to the
+ * ridge. "Blocked by terrain" at 3° is nonsense for a moonrise — the show is
+ * the moon clearing the ridge, 20 minutes late.
+ */
+function effectLabel(kind: EventKind, eff: ObstructionEffect): { label: string; grade: number } {
+  const rising = kind.endsWith("rise");
+  if (!eff.time) return { label: `Open horizon — full ${rising ? "rise" : "set"}`, grade: 4 };
+  const when = timeFmt.format(eff.time);
+  const lost = `${rising ? "+" : "−"}${eff.lostMin} min`;
+  return {
+    label: rising ? `Clears the ridge ~${when} (${lost})` : `Behind the ridge ~${when} (${lost})`,
+    grade: lostGrade(eff.lostMin),
+  };
+}
+
+/** Minutes a spot gains over the origin, when the origin's own readout is known. */
+function gainVsHere(eff: ObstructionEffect): { text: string; cls: string; min: number } | null {
+  if (!here || here.kind !== state.kind) return null;
+  const min = here.effect.lostMin - eff.lostMin;
+  if (min > 0) return { text: `+${min} min vs here`, cls: "good", min };
+  if (min < 0) return { text: `${min} min vs here`, cls: "bad", min };
+  return { text: "same as here", cls: "same", min };
 }
 
 function renderEventPicker(): void {
@@ -462,7 +497,7 @@ function renderEventPicker(): void {
       clearResults(); // results were scored along the old event's azimuth
       renderEventPicker();
       drawAzimuth();
-      showEventStatus();
+      void probeHere();
       writeHash();
     });
     eventsNav.appendChild(btn);
@@ -484,7 +519,7 @@ function refreshEvents(): void {
   }
   renderEventPicker();
   drawAzimuth();
-  showEventStatus();
+  void probeHere();
 }
 
 /** Blank slate: drop everything the last search drew and listed. */
@@ -501,7 +536,7 @@ function clearResults(): void {
 
 clearBtn.addEventListener("click", () => {
   clearResults();
-  showEventStatus();
+  statusEl.textContent = "";
 });
 
 function setLocation(loc: LatLon, pan: boolean): void {
@@ -554,6 +589,7 @@ let requestId = 0;
 
 type SearchReply = Extract<WorkerMessage, { type: "result" }>;
 type RingReply = Extract<WorkerMessage, { type: "ringResult" }>;
+type ProbeReply = Extract<WorkerMessage, { type: "probeResult" }>;
 type ProgressPhase = Extract<WorkerMessage, { type: "progress" }>["phase"];
 
 /**
@@ -563,7 +599,7 @@ type ProgressPhase = Extract<WorkerMessage, { type: "progress" }>["phase"];
  * hanging with the button disabled.
  */
 function askWorker<R extends WorkerMessage>(
-  req: SearchRequest | RingRequest,
+  req: SearchRequest | RingRequest | ProbeRequest,
   onProgress: (phase: ProgressPhase, done: number, total: number) => void
 ): Promise<R> {
   return new Promise((resolve, reject) => {
@@ -600,14 +636,131 @@ function zoomForRadius(radiusM: number): number {
 
 /** Largest ring we fetch building footprints for (Overpass payload ceiling). */
 const BUILDINGS_MAX_RADIUS_M = 8000;
+/** Roadside samples per search (stage-1 ray budget). */
+const ROAD_MAX_CANDIDATES = 1500;
+/** DEM zoom for the single-point probe (few tiles, good detail). */
+const PROBE_ZOOM = 11;
 
 // Stage-2 sky ring: a full-circle profile for the ranking finalists only.
 // 24 rays on every candidate would be an 8× blowup over the whole field;
-// over ~50 finalists it's under a quarter of the stage-1 ray work.
+// over ~40 finalists it's a fraction of the stage-1 ray work.
 const RING_RAY_COUNT = 24;
 const RING_MAX_DIST_M = 30_000;
-const RING_POI_FINALISTS = 30;
-const RING_GRID_FINALISTS = 20;
+const RING_FINALISTS = 40;
+const TOP_SPOTS = 8;
+
+// ---------- from here ----------
+//
+// The question you actually have when you're already somewhere: when does it
+// come over the ridge from *this* spot? One ray-march, no search, no Overpass.
+
+interface HereResult extends Omit<CandidateResult, "id"> {
+  kind: EventKind;
+  loc: LatLon;
+  effect: ObstructionEffect;
+  skyline?: SkylineFeature | null;
+}
+let here: HereResult | null = null;
+let hereRequest = 0;
+/** Pending probe, so a search can wait for the origin's readout before ranking against it. */
+let herePromise: Promise<void> = Promise.resolve();
+
+function probeHere(): Promise<void> {
+  herePromise = doProbeHere();
+  return herePromise;
+}
+
+async function doProbeHere(): Promise<void> {
+  const ev = state.events[state.kind];
+  here = null;
+  clearSightline("here-sightline");
+  if (!ev) {
+    renderHere();
+    return;
+  }
+  const id = ++requestId;
+  hereRequest = id;
+  const loc = state.loc;
+  renderHere("Reading the terrain from here…");
+  try {
+    const req: ProbeRequest = {
+      type: "probe",
+      requestId: id,
+      point: loc,
+      azimuthDeg: ev.azimuthDeg,
+      spreadDeg: 8,
+      maxDistM: RAY_REACH_M,
+      zoom: PROBE_ZOOM,
+      eyeHeightM: 2,
+    };
+    const reply = await askWorker<ProbeReply>(req, () => {});
+    if (hereRequest !== id) return; // superseded by a newer pin/event
+    const r = reply.result;
+    here = {
+      ...r,
+      kind: ev.kind,
+      loc,
+      effect: obstructionEffect(ev.kind, loc.lat, loc.lon, ev.time, r.obstructionDeg),
+    };
+    renderHere();
+    if (!hitTerrain(r)) return;
+    if (!mapReady) await new Promise<void>((resolve) => map.once("load", () => resolve()));
+    if (hereRequest !== id) return;
+    drawSightline(loc, { lat: r.horizonLat, lon: r.horizonLon }, null, "here-sightline");
+    const [feature] = await nameSkylinePoints([{ lat: r.horizonLat, lon: r.horizonLon }]);
+    if (hereRequest !== id || !feature) return;
+    here.skyline = feature;
+    renderHere();
+    drawSightline(loc, { lat: r.horizonLat, lon: r.horizonLon }, feature.name, "here-sightline");
+  } catch (err) {
+    console.error(err);
+    if (hereRequest === id) renderHere("Terrain data unavailable right now.");
+  }
+}
+
+function renderHere(note?: string): void {
+  const ev = state.events[state.kind];
+  if (!ev) {
+    hereEl.hidden = true;
+    return;
+  }
+  hereEl.hidden = false;
+  const t = timeFmt.format(ev.time);
+  const moon = ev.moonIllumination !== undefined ? ` · ${Math.round(ev.moonIllumination * 100)}% lit` : "";
+  const gh = state.golden[state.kind];
+  const golden = gh ? ` · golden hour ${timeFmt.format(gh.start)}–${timeFmt.format(gh.end)}` : "";
+  const facts = `${eventLabel(state.kind)} ${t} · az ${Math.round(ev.azimuthDeg)}°${moon}`;
+
+  if (!here) {
+    hereEl.innerHTML = `<div class="here-main"></div><div class="here-sub"></div>`;
+    hereEl.querySelector(".here-main")!.textContent = facts;
+    hereEl.querySelector(".here-sub")!.textContent = (note ?? "") + (note ? "" : golden.slice(3));
+    return;
+  }
+
+  const rising = state.kind.endsWith("rise");
+  const { effect } = here;
+  let main: string;
+  if (effect.time) {
+    const az = Math.round(azimuthAtTime(state.kind, here.loc.lat, here.loc.lon, effect.time));
+    main = rising
+      ? `Over the ridge ~${timeFmt.format(effect.time)} · az ${az}° (+${effect.lostMin} min)`
+      : `Behind the ridge ~${timeFmt.format(effect.time)} · az ${az}° (−${effect.lostMin} min)`;
+  } else {
+    main = `Open horizon — full ${rising ? "rise" : "set"} at ${t}`;
+  }
+  const ridge = hitTerrain(here)
+    ? ` · ridge ${formatAngle(here.obstructionDeg)}, ${(here.horizonDistM / 1000).toFixed(0)} km away`
+    : " · no terrain on the horizon";
+  const behind = here.skyline
+    ? ` · behind ${here.skyline.name}${here.skyline.eleM !== undefined ? ` (${Math.round(here.skyline.eleM).toLocaleString()} m)` : ""}`
+    : "";
+  hereEl.innerHTML = `<div class="here-main g${lostGrade(effect.lostMin)}"></div><div class="here-sub"></div>`;
+  hereEl.querySelector(".here-main")!.textContent = main;
+  hereEl.querySelector(".here-sub")!.textContent = `${facts}${ridge}${behind}${golden}`;
+}
+
+// ---------- find spots ----------
 
 interface RankedSpot {
   candidate: Candidate;
@@ -615,6 +768,8 @@ interface RankedSpot {
   score: number;
   rank: number;
   flag?: string;
+  effect: ObstructionEffect;
+  localTime: Date;
   /** Named skyline feature the event happens behind; filled in async. */
   skyline?: SkylineFeature | null;
   /** Full-circle sky profile (finalists only; absent if the ring failed). */
@@ -644,18 +799,19 @@ async function search(ev: SkyEvent): Promise<void> {
   // Results draw onto the basemap; a tap before the style has loaded waits for it.
   if (!mapReady) await new Promise<void>((resolve) => map.once("load", () => resolve()));
   clearResults();
-  statusEl.textContent = "Looking up places worth going (OpenStreetMap)…";
+  statusEl.textContent = "Looking up roads and places (OpenStreetMap)…";
 
   const radiusM = state.radiusKm * 1000;
   const grid = gridCandidates(state.loc, radiusM);
-  const { pois, ok: poisOk } = await fetchPois(state.loc, radiusM, state.mode);
-  statusEl.textContent = pois.length
-    ? `Found ${pois.length} mapped places — fetching terrain…`
-    : poisOk
-      ? "No mapped places nearby — scoring open terrain…"
-      : "⚠ Place lookup (Overpass) unavailable — scoring open terrain only…";
+  const [{ pois, ok: poisOk }, { roads, ok: roadsOk }] = await Promise.all([
+    fetchPois(state.loc, radiusM, state.mode),
+    fetchRoadCandidates(state.loc, radiusM, state.mode, ROAD_MAX_CANDIDATES),
+  ]);
+  statusEl.textContent = roadsOk
+    ? `${roads.length} roadside points, ${pois.length} mapped places — fetching terrain…`
+    : "⚠ Road lookup (Overpass) unavailable — scoring open terrain instead…";
 
-  const candidates: Candidate[] = [...grid, ...pois];
+  const candidates: Candidate[] = [...grid, ...roads, ...pois];
   const req: SearchRequest = {
     type: "search",
     requestId: ++requestId,
@@ -679,7 +835,7 @@ async function search(ev: SkyEvent): Promise<void> {
         : `Scoring horizons… ${done}/${total}`;
   });
 
-  await presentResults(candidates, results, ev, radiusM, poisOk, buildingCount, req.requestId);
+  await presentResults(candidates, results, ev, radiusM, { poisOk, roadsOk }, buildingCount, req.requestId);
 }
 
 /**
@@ -728,7 +884,7 @@ async function presentResults(
   results: CandidateResult[],
   ev: SkyEvent,
   radiusM: number,
-  poisOk: boolean,
+  ok: { poisOk: boolean; roadsOk: boolean },
   buildingCount: number | null,
   searchRequestId: number
 ): Promise<void> {
@@ -751,10 +907,11 @@ async function presentResults(
     }));
 
   const gridScored = scored.filter((x) => x.candidate.source === "grid");
-  const poiScored = scored.filter((x) => x.candidate.source !== "grid");
+  const roadScored = scored.filter((x) => x.candidate.source === "road");
+  const poiScored = scored.filter((x) => x.candidate.source !== "grid" && x.candidate.source !== "road");
 
-  // Heatmap shows raw terrain quality (before reachability adjustments),
-  // stretched to the local score distribution.
+  // Heatmap shows raw terrain quality over the whole ring (grid), stretched
+  // to the local score distribution.
   const heatPoints: ScorePoint[] = gridScored.map((x) => ({
     lat: x.candidate.lat,
     lon: x.candidate.lon,
@@ -770,20 +927,24 @@ async function presentResults(
     radiusM,
     spacingM: gridSpacingM(radiusM),
     points: heatPoints,
+    ev,
   };
-  // Keep the direction lines and sightline readable above the score surface.
+  // Keep the direction lines and sightlines readable above the score surface.
   for (const id of OVERLAY_LAYERS) {
     if (map.getLayer(id)) map.moveLayer(id);
   }
 
-  // Reachability reality check (drive/bike): a spot far from any mapped road
-  // is a hike, not a stop. Applies to ALL candidates before ranking — a remote
-  // 13er tagged natural=peak is exactly what this must catch.
+  // Ranking pool: roadside samples are on a road by construction. Without
+  // them (Overpass down) fall back to raw grid cells, honestly flagged.
+  const terrainPool = ok.roadsOk ? roadScored : gridScored;
+
+  // Reachability reality check for everything NOT sampled from a road: a
+  // remote 13er tagged natural=peak is exactly what this must catch.
   const roads = buildRoadIndex(map, state.mode);
   const excluded = new Set<Scored>();
   if (roads) {
     const bands = roadBandsM(state.mode);
-    for (const x of [...gridScored, ...poiScored]) {
+    for (const x of [...poiScored, ...(ok.roadsOk ? [] : gridScored)]) {
       const d = roads.nearestRoadM(x.candidate);
       if (d === null || d > bands.exclude) {
         excluded.add(x); // not reachable in this travel mode; heatmap still shows it
@@ -794,29 +955,32 @@ async function presentResults(
     }
   }
 
-  const byPoiRank = (a: Scored, b: Scored) =>
-    b.score + 0.4 * b.candidate.weight - (a.score + 0.4 * a.candidate.weight);
-  const byScore = (a: Scored, b: Scored) => b.score - a.score;
-  const poiFinalists = poiScored
+  // One merged ranking. Mapped places get a small nudge (a signed viewpoint
+  // beats an anonymous shoulder with the same sky); unverified grid cells a
+  // small penalty.
+  // Driving: an unpaved track with the same view loses the tie to a paved
+  // pull-off (a moonrise from a bar shouldn't route you up a jeep road).
+  const trackPenalty = state.mode === "drive" ? 0.4 : 0;
+  const bonus = (x: Scored) =>
+    x.candidate.source === "road"
+      ? x.candidate.roadClass === "track"
+        ? -trackPenalty
+        : 0
+      : x.candidate.source === "grid"
+        ? -0.25
+        : 0.5 * x.candidate.weight;
+  const byRank = (a: Scored, b: Scored) => b.score + bonus(b) - (a.score + bonus(a));
+  const finalists = [...terrainPool, ...poiScored]
     .filter((x) => !excluded.has(x))
-    .sort(byPoiRank)
-    .slice(0, RING_POI_FINALISTS);
-  const gridFinalists = gridScored
-    .filter((x) => !excluded.has(x))
-    .sort(byScore)
-    .slice(0, RING_GRID_FINALISTS);
+    .sort(byRank)
+    .slice(0, RING_FINALISTS);
 
   // Stage 2: near mountains the exact sun line being blocked is forgivable —
   // seeing most of the horizon is what makes a spot great. March a full sky
   // ring for the finalists and re-rank on openness before the final pick.
-  const rings = await fetchSkyRings(
-    [...poiFinalists, ...gridFinalists],
-    ev.azimuthDeg,
-    searchRequestId,
-    radiusM
-  );
+  const rings = await fetchSkyRings(finalists, ev.azimuthDeg, searchRequestId, radiusM);
   const ringAzs = ringAzimuths(ev.azimuthDeg, RING_RAY_COUNT);
-  for (const x of [...poiFinalists, ...gridFinalists]) {
+  for (const x of finalists) {
     const angles = rings.get(x.candidate.id);
     if (!angles || !angles.length) continue;
     x.skyAngles = angles;
@@ -824,34 +988,38 @@ async function presentResults(
     x.score += opennessDelta(x.result.obstructionDeg, x.sky.openness);
   }
 
-  // POIs first (real, named places), then best open-terrain grid cells.
-  const poiTop = pickSpread(poiFinalists.sort(byPoiRank), 5, 250);
-  const gridTop = pickSpread(
-    gridFinalists.sort(byScore),
-    3,
-    Math.max(1200, gridSpacingM(radiusM) * 1.7)
-  );
-
-  // Landcover reality-check for raw terrain picks (POIs exempt: a mapped
+  // Landcover reality-check for terrain picks (POIs exempt: a mapped
   // viewpoint inside forest is usually a cleared overlook).
-  for (const x of gridTop) {
+  for (const x of finalists) {
+    if (x.candidate.source !== "road" && x.candidate.source !== "grid") continue;
     const eff = landcoverAt(map, x.candidate);
     if (eff) {
       x.score += eff.scoreDelta;
       if (eff.flag) x.flags.push(eff.flag);
     }
+    if (x.candidate.roadClass === "track") x.flags.push("unpaved track — check it's passable");
   }
-  gridTop.sort((a, b) => b.score - a.score);
 
-  const spots: RankedSpot[] = [...poiTop, ...gridTop].map((x, i) => ({
-    candidate: x.candidate,
-    result: x.result,
-    score: x.score,
-    flag: x.flags.join(" · ") || undefined,
-    rank: i + 1,
-    sky: x.sky,
-    skyAngles: x.skyAngles,
-  }));
+  const top = pickSpread(finalists.sort(byRank), TOP_SPOTS, Math.max(800, radiusM / 15));
+
+  // Rank against where you are: the search waits for the origin's readout.
+  await herePromise.catch(() => {});
+
+  const spots: RankedSpot[] = top.map((x, i) => {
+    const c = x.candidate;
+    const localTime = eventTimeAt(ev.kind, c.lat, c.lon, ev.time) ?? ev.time;
+    return {
+      candidate: c,
+      result: x.result,
+      score: x.score,
+      flag: x.flags.join(" · ") || undefined,
+      rank: i + 1,
+      sky: x.sky,
+      skyAngles: x.skyAngles,
+      localTime,
+      effect: obstructionEffect(ev.kind, c.lat, c.lon, localTime, x.result.obstructionDeg),
+    };
+  });
 
   renderSpotMarkers(
     map,
@@ -859,7 +1027,7 @@ async function presentResults(
       lat: s.candidate.lat,
       lon: s.candidate.lon,
       rank: s.rank,
-      isPoi: s.candidate.source !== "grid",
+      isPoi: s.candidate.source !== "grid" && s.candidate.source !== "road",
     })),
     (rank) => {
       document.getElementById(`spot-${rank}`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -867,10 +1035,17 @@ async function presentResults(
   );
 
   statusEl.textContent = spots.length
-    ? `${eventLabel(state.kind)} at ${timeFmt.format(ev.time)}, azimuth ${Math.round(ev.azimuthDeg)}°. Top spots within ${state.radiusKm} km:`
+    ? `${eventLabel(ev.kind)} ${timeFmt.format(ev.time)}, az ${Math.round(ev.azimuthDeg)}°. Best spots within ${state.radiusKm} km:`
     : "No results — try a larger radius.";
 
   resultsEl.innerHTML = "";
+  const bestGain = here && here.kind === ev.kind ? Math.max(...spots.map((s) => here!.effect.lostMin - s.effect.lostMin)) : null;
+  if (bestGain !== null && spots.length && bestGain <= 1) {
+    const note = document.createElement("div");
+    note.className = "note";
+    note.textContent = "Nothing in this ring beats where you are — stay put.";
+    resultsEl.appendChild(note);
+  }
   if (stats) {
     const legend = document.createElement("div");
     legend.id = "legend";
@@ -881,11 +1056,18 @@ async function presentResults(
     legend.innerHTML = `<div class="bar"></div><div class="labels"><span>worse</span><span>${note}</span><span>better</span></div>`;
     resultsEl.appendChild(legend);
   }
-  if (!poisOk) {
+  if (!ok.roadsOk) {
     const warn = document.createElement("div");
     warn.className = "warn";
     warn.textContent =
-      "⚠ OpenStreetMap place lookup is unavailable right now — results below are raw terrain only (access unverified). Try again in a minute for named places.";
+      "⚠ OpenStreetMap road lookup is unavailable right now — terrain picks below are raw grid cells (access unverified). Try again in a minute for roadside spots.";
+    resultsEl.appendChild(warn);
+  }
+  if (!ok.poisOk) {
+    const warn = document.createElement("div");
+    warn.className = "warn";
+    warn.textContent =
+      "⚠ OpenStreetMap place lookup is unavailable right now — no named viewpoints or parking in the results.";
     resultsEl.appendChild(warn);
   }
   if (buildingCount === null) {
@@ -895,7 +1077,7 @@ async function presentResults(
       "⚠ Building data (Overpass) unavailable right now — scores ignore buildings, so streets and blocks look more open than they are.";
     resultsEl.appendChild(warn);
   }
-  const cards = spots.map((s) => spotCard(s, ev));
+  const cards = spots.map((s) => spotCard(s));
   for (const card of cards) resultsEl.appendChild(card);
   clearBtn.hidden = false;
   void annotateSkylines(spots, cards);
@@ -927,17 +1109,31 @@ async function annotateSkylines(spots: RankedSpot[], cards: HTMLElement[]): Prom
   });
 }
 
-/** Greedy top-N with a minimum separation so picks don't cluster. */
+/** Same named road at most this many times in the list. */
+const MAX_PER_ROAD = 2;
+
+/**
+ * Greedy top-N with a minimum separation so picks don't cluster, and a cap
+ * per named road so one good track doesn't fill the list.
+ */
 function pickSpread<T extends { candidate: Candidate }>(
   sorted: T[],
   n: number,
   minSepM: number
 ): T[] {
   const picked: T[] = [];
+  const perRoad = new Map<string, number>();
   for (const x of sorted) {
     if (picked.length >= n) break;
     const tooClose = picked.some((p) => flatDistanceM(p.candidate, x.candidate) < minSepM);
-    if (!tooClose) picked.push(x);
+    if (tooClose) continue;
+    const road = x.candidate.source === "road" ? x.candidate.name : undefined;
+    if (road) {
+      const used = perRoad.get(road) ?? 0;
+      if (used >= MAX_PER_ROAD) continue;
+      perRoad.set(road, used + 1);
+    }
+    picked.push(x);
   }
   return picked;
 }
@@ -964,27 +1160,25 @@ function skyRingSvg(angles: number[], eventAzimuthDeg: number, openSkyDeg: numbe
   return `<svg class="skyring" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" role="img" aria-label="${label}"><title>${label}</title>${spokes}${eventSpoke}</svg>`;
 }
 
-function spotCard(s: RankedSpot, ev: SkyEvent): HTMLElement {
+function spotCard(s: RankedSpot): HTMLElement {
   const c = s.candidate;
-  const v = verdict(s.result.obstructionDeg);
-  const isPoi = c.source !== "grid";
-  const name = c.name ?? (isPoi ? c.label! : "Open terrain");
-  const chip = isPoi ? c.label! : "access unverified";
-
-  const localTime = eventTimeAt(state.kind, c.lat, c.lon, ev.time) ?? ev.time;
-  const obstructed = obstructedEventTime(state.kind, c.lat, c.lon, localTime, s.result.obstructionDeg);
-  const timeNote = obstructed
-    ? state.kind.endsWith("set")
-      ? ` (drops behind terrain ~${timeFmt.format(obstructed)})`
-      : ` (clears terrain ~${timeFmt.format(obstructed)})`
-    : "";
+  const kind = lastSearch?.ev.kind ?? state.kind;
+  const isRoad = c.source === "road";
+  const isPoi = !isRoad && c.source !== "grid";
+  const name = c.name ?? (isRoad ? "Roadside" : isPoi ? c.label! : "Open terrain");
+  const chip = isPoi || isRoad ? c.label! : "access unverified";
+  const v = effectLabel(kind, s.effect);
+  const gain = gainVsHere(s.effect);
 
   const el = document.createElement("article");
   el.className = "spot-card";
   el.id = `spot-${s.rank}`;
   const skySvg =
-    s.sky && s.skyAngles ? skyRingSvg(s.skyAngles, ev.azimuthDeg, s.sky.openSkyDeg) : "";
+    s.sky && s.skyAngles ? skyRingSvg(s.skyAngles, lastSearch?.ev.azimuthDeg ?? 0, s.sky.openSkyDeg) : "";
   const skyNote = s.sky ? ` · ${Math.round(s.sky.openSkyDeg)}° open sky` : "";
+  const ridge = hitTerrain(s.result)
+    ? `Ridge ${formatAngle(s.result.obstructionDeg)}, ${(s.result.horizonDistM / 1000).toFixed(1)} km away`
+    : "No terrain on the horizon";
   el.innerHTML = `
     <div class="head">
       <span class="rank">${s.rank}</span>
@@ -992,10 +1186,10 @@ function spotCard(s: RankedSpot, ev: SkyEvent): HTMLElement {
       <span class="chip"></span>
       ${skySvg}
     </div>
-    <div class="verdict g${v.grade}"></div>
+    <div class="verdict g${v.grade}"><span class="label"></span>${gain ? ` <span class="gain ${gain.cls}"></span>` : ""}</div>
     <div class="detail">
-      Horizon ${(s.result.horizonDistM / 1000).toFixed(1)} km away · ${formatAngle(s.result.obstructionDeg)}${skyNote}<span class="skyline"></span><br>
-      ${eventLabel(state.kind)} ${timeFmt.format(localTime)}${timeNote} · elevation ${Math.round(s.result.groundM)} m
+      ${ridge}${skyNote}<span class="skyline"></span><br>
+      ${eventLabel(kind)} ${timeFmt.format(s.localTime)} · elevation ${Math.round(s.result.groundM)} m
     </div>
     ${s.flag ? `<div class="flag"></div>` : ""}
     <div class="actions">
@@ -1004,7 +1198,8 @@ function spotCard(s: RankedSpot, ev: SkyEvent): HTMLElement {
     </div>`;
   el.querySelector(".name")!.textContent = name;
   el.querySelector(".chip")!.textContent = chip;
-  el.querySelector(".verdict")!.textContent = v.label;
+  el.querySelector(".verdict .label")!.textContent = v.label;
+  if (gain) el.querySelector(".verdict .gain")!.textContent = gain.text;
   if (s.flag) el.querySelector(".flag")!.textContent = `⚠ ${s.flag}`;
   el.querySelector(".head")!.addEventListener("click", () => {
     if (hitTerrain(s.result)) {

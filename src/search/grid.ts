@@ -4,11 +4,13 @@ import { destination, type LatLon } from "../geo";
 
 export interface Candidate extends LatLon {
   id: string;
-  /** "grid" or a POI category id. */
+  /** "grid" (heatmap only), "road" (roadside sample) or a POI category id. */
   source: string;
   name?: string;
   label?: string;
   weight: number;
+  /** OSM highway class for road samples. */
+  roadClass?: string;
 }
 
 export function gridCandidates(centre: LatLon, radiusM: number, rings = 12): Candidate[] {

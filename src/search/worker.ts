@@ -45,6 +45,18 @@ export interface RingRequest {
   candidates: { id: string; lat: number; lon: number }[];
 }
 
+/** One point, one event direction: the "from here" readout. */
+export interface ProbeRequest {
+  type: "probe";
+  requestId: number;
+  point: LatLon;
+  azimuthDeg: number;
+  spreadDeg: number;
+  maxDistM: number;
+  zoom: number;
+  eyeHeightM: number;
+}
+
 export interface CandidateResult {
   id: string;
   obstructionDeg: number;
@@ -77,6 +89,7 @@ export type WorkerMessage =
       buildingCount: number | null;
     }
   | { type: "ringResult"; requestId: number; results: RingResult[] }
+  | { type: "probeResult"; requestId: number; result: Omit<CandidateResult, "id"> }
   /** The request threw; main rejects it instead of waiting forever. */
   | { type: "error"; requestId: number; message: string };
 
@@ -88,10 +101,18 @@ let lastObstacles: { searchRequestId: number; obstacles: ObstacleField | undefin
   obstacles: undefined,
 };
 
-function corridorTiles(req: SearchRequest): TileKey[] {
+function corridorTiles(req: {
+  origin: LatLon;
+  radiusM: number;
+  azimuthDeg: number;
+  spreadDeg: number;
+  maxDistM: number;
+  zoom: number;
+}): TileKey[] {
   const { origin, radiusM, azimuthDeg, spreadDeg, maxDistM, zoom } = req;
   const seen = new Map<string, TileKey>();
-  const pad = radiusM * 1.15;
+  // A zero-radius probe still needs the tile under the point plus a margin.
+  const pad = Math.max(radiusM * 1.15, 500);
   const sweepStep = Math.min(15_000, maxDistM / 8);
   for (let d = 0; d <= maxDistM; d += sweepStep) {
     for (const az of [azimuthDeg - spreadDeg, azimuthDeg, azimuthDeg + spreadDeg]) {
@@ -131,11 +152,12 @@ function ringTiles(req: RingRequest): TileKey[] {
 
 const post = (m: WorkerMessage) => (self as unknown as Worker).postMessage(m);
 
-self.onmessage = async (e: MessageEvent<SearchRequest | RingRequest>) => {
+self.onmessage = async (e: MessageEvent<SearchRequest | RingRequest | ProbeRequest>) => {
   const req = e.data;
   try {
     if (req.type === "search") await handleSearch(req);
     else if (req.type === "ring") await handleRing(req);
+    else if (req.type === "probe") await handleProbe(req);
   } catch (err) {
     post({ type: "error", requestId: req.requestId, message: String(err) });
   }
@@ -188,6 +210,31 @@ async function handleSearch(req: SearchRequest): Promise<void> {
     requestId: req.requestId,
     results,
     buildingCount: req.buildings ? (grid ? grid.count : null) : 0,
+  });
+}
+
+async function handleProbe(req: ProbeRequest): Promise<void> {
+  const keys = corridorTiles({ ...req, origin: req.point, radiusM: 0 });
+  await cache.fetchTiles(keys, (done, total) =>
+    post({ type: "progress", requestId: req.requestId, phase: "tiles", done, total })
+  );
+  const stepM = Math.max(40, metersPerPixel(req.point.lat, req.zoom));
+  const sample = (lat: number, lon: number) => cache.sampleElevation(lat, lon, req.zoom);
+  const r = horizonFan(sample, req.point.lat, req.point.lon, req.azimuthDeg, req.spreadDeg, {
+    maxDistM: req.maxDistM,
+    startStepM: stepM,
+    eyeHeightM: req.eyeHeightM,
+  });
+  post({
+    type: "probeResult",
+    requestId: req.requestId,
+    result: {
+      obstructionDeg: r.maxAngleDeg,
+      horizonDistM: r.horizonDistM,
+      groundM: r.groundM,
+      horizonLat: r.horizonLat,
+      horizonLon: r.horizonLon,
+    },
   });
 }
 
