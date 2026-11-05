@@ -23,6 +23,7 @@ import { gridCandidates, gridSpacingM, type Candidate } from "./search/grid";
 import { nameSkylinePoints, type SkylineFeature } from "./search/horizonFeature";
 import { landcoverAt } from "./search/landcover";
 import { verdict, VERDICT_MAX_CARDS } from "./search/verdict";
+import { resultNotes } from "./render/notes";
 import { fetchOsmCandidates } from "./search/osm";
 import type { TravelMode } from "./search/pois";
 import { buildRoadIndex, roadBandsM } from "./search/roads";
@@ -489,9 +490,14 @@ function renderEventPicker(): void {
     setPressed(btn, kind === state.kind);
     const extra =
       ev?.moonIllumination !== undefined ? ` · ${Math.round(ev.moonIllumination * 100)}%` : "";
+    // The weekday only when the event falls on another day than the one being
+    // planned (a moonrise often does), so four chips fit a phone's width.
+    const sameDay = ev && ev.time.toDateString() === baseTime().toDateString();
+    const when = ev ? (sameDay ? timeFmt : dayTimeFmt).format(ev.time) : "";
     btn.innerHTML =
       `<span class="dot" style="background:${EVENT_COLORS[kind]}"></span>${eventLabel(kind)}` +
-      `<span class="t">${ev ? dayTimeFmt.format(ev.time) + extra : "—"}</span>`;
+      `<span class="t">${ev ? when + extra : "—"}</span>`;
+    if (ev) btn.title = dayTimeFmt.format(ev.time) + extra;
     btn.disabled = !ev;
     btn.addEventListener("click", () => {
       if (kind === state.kind) return;
@@ -1093,7 +1099,11 @@ async function presentResults(
     }
   );
 
-  statusEl.textContent = spots.length
+  // Under a verdict the status line would only repeat it (event, radius) and
+  // cost card 1 its place above the fold on a phone.
+  statusEl.textContent = answer
+    ? ""
+    : spots.length
     ? `${eventLabel(ev.kind)} ${timeFmt.format(ev.time)}, az ${Math.round(ev.azimuthDeg)}°. Best spots within ${state.radiusKm} km:`
     : "No results — try a larger radius.";
 
@@ -1105,40 +1115,41 @@ async function presentResults(
     line.textContent = answer.text;
     resultsEl.appendChild(line);
   }
-  if (stats) {
-    const legend = document.createElement("div");
-    legend.id = "legend";
-    const note =
-      stats.p50 < -1
-        ? "Terrain blocks the view everywhere near you — colors compare spots relatively."
-        : "Colors compare spots relative to your area.";
-    legend.innerHTML = `<div class="bar"></div><div class="labels"><span>worse</span><span>${note}</span><span>better</span></div>`;
-    resultsEl.appendChild(legend);
-  }
-  if (osm === "pending") {
-    const note = document.createElement("div");
-    note.className = "note";
-    note.id = "osm-pending";
-    note.textContent = "Best by terrain so far — adding roads and named places from OpenStreetMap…";
-    resultsEl.appendChild(note);
-  } else if (osm === "failed") {
-    const warn = document.createElement("div");
-    warn.className = "warn";
-    warn.textContent =
-      "⚠ OpenStreetMap isn't answering right now — spots are by terrain alone (access unverified). Try again in a minute for roadside spots and named places.";
-    resultsEl.appendChild(warn);
-  } else if (!roadsIn) {
-    const note = document.createElement("div");
-    note.className = "note";
-    note.textContent = "No mapped roads you can stop on in this ring — spots are by terrain alone.";
-    resultsEl.appendChild(note);
-  }
-  if (buildingCount === null) {
-    const warn = document.createElement("div");
-    warn.className = "warn";
-    warn.textContent =
-      "⚠ Building data (Overpass) unavailable right now — scores ignore buildings, so streets and blocks look more open than they are.";
-    resultsEl.appendChild(warn);
+  // The colour key and any warnings fold into one small line under the
+  // verdict, so card 1 stays above the fold on a phone (salida-test.md, item 4).
+  // Tapping the line opens the full sentences.
+  const notes = resultNotes({
+    heatmap: !!stats,
+    terrainBlocksAll: !!stats && stats.p50 < -1,
+    osm,
+    roadsIn,
+    buildingsMissing: buildingCount === null,
+  });
+  if (notes.short.length) {
+    const fine = document.createElement("details");
+    fine.id = "notes";
+    fine.className = "fine";
+    const summary = document.createElement("summary");
+    if (stats) {
+      const bar = document.createElement("span");
+      bar.className = "bar";
+      bar.setAttribute("aria-hidden", "true");
+      summary.appendChild(bar);
+    }
+    notes.short.forEach((phrase, i) => {
+      if (i) summary.appendChild(document.createTextNode(" · "));
+      const span = document.createElement("span");
+      if (phrase.startsWith("⚠")) span.className = "w";
+      span.textContent = phrase;
+      summary.appendChild(span);
+    });
+    fine.appendChild(summary);
+    for (const sentence of notes.full) {
+      const p = document.createElement("p");
+      p.textContent = sentence;
+      fine.appendChild(p);
+    }
+    resultsEl.appendChild(fine);
   }
   const cards = spots.map((s) => spotCard(s));
   for (const card of cards) resultsEl.appendChild(card);

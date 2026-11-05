@@ -1,30 +1,32 @@
 # Handoff
 
-**State:** Fix list items 1 and 2 of `docs/salida-test.md` are done on this
-branch. *Find spots* scores the terrain grid first and shows spots as soon as
-tiles are in; roads and places come from one merged Overpass query sent to all
-three keyless worldwide mirrors at once, capped at 10 s for the whole lookup,
-and merge in when they arrive. The *From here* ridge name no longer holds up
-the search. Building footprints (walk/bike, town scale) are capped at 12 s.
-Measured 2026-11-04, Salida drive 25 km, phone size, headless Chrome: first
-spots at 4.5 s with Overpass refused, 4.0 s with it hanging (done 13.3 s),
-4.8 s with it answering (a made-up test road set, since no mirror answered
-from this host that night). `npm test` (27) and `npm run build` pass.
+**State:** Fix list items 1 to 4 of `docs/salida-test.md` are done on this
+branch (PR #2). *Find spots* scores terrain first and shows spots in about
+4 s whether Overpass answers or not (mirrors raced, one merged query, 10 s
+cap); when no spot gains more than 7 min over the pin, one verdict line leads
+and three cards follow. Item 4, the phone layout: under 760 px the topbar is
+two rows, brand and date, then all four event chips in equal columns (the
+weekday shows only when the event is on another day than the one planned);
+the colour key and the OpenStreetMap and building warnings fold into one
+small line under the verdict, tap to open the full sentences
+(`src/render/notes.ts`); the status line is dropped under a verdict, since
+the verdict already names the event and radius. Measured 2026-11-05, Salida
+drive 25 km at 390 × 844, headless Chrome: verdict and card 1 fully visible
+without scrolling (card 1 ends 10 px above the sheet's edge), no chip
+clipped. `npm test` (38) and `npm run build` pass.
 
-Item 3 is done too: when no spot gains more than 7 min over the pin, one line
-leads the list ("Nowhere within 25 km sees this sunset more than 7 minutes
-longer; go higher.", or "stay put" when the pin is already open) and only three
-cards follow. Salida drive 25 km at 390 px, Overpass hanging: the line sits
-above the first card. `npm test` (32) and `npm run build` pass.
-
-**Next:** fix list item 4, the phone layout (topbar chips cut off; legend and
-warning push the first card below the fold, see the verdict screenshots).
+**Next:** item 5, the legend wording in Denver (the full sentence under the
+folded line now says "Terrain blocks some of the view everywhere near you",
+which may already be enough; check in Denver), then item 7 (missing tile
+read as 0 m).
 
 **Decided:** the verdict cut is 7 min, not the doc's "~5": the Salida test
 called +2 to +7 "nothing nearby is much better", and Jimmy's own example line
-names 7.
+names 7. The drag-up bottom sheet in item 4 was not built: folding the notes
+was enough to put card 1 above the fold, and a drag gesture is more code to
+keep working than it gains.
 
- mirrors are the three keyless worldwide instances on the OSM wiki's
+**Mirrors:** the three keyless worldwide instances on the OSM wiki's
 *Overpass API* page (overpass-api.de, maps.mail.ru, overpass.private.coffee);
 overpass.kumi.systems was dropped because the wiki lists it as private.coffee's
 old name. A mirror that answers 429, 406 or 5xx sits out 30 s, as the wiki asks.

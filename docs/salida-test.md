@@ -85,9 +85,15 @@ permalink, Denver drive 25 km permalink, Denver via the locate button.
    when nothing beats the pin by more than ~5
    minutes, say so in one line ("Nowhere within 25 km sees this sunset
    more than 7 minutes longer; go higher") instead of eight near-identical cards.
-4. **Phone layout:** topbar on two rows or an event dropdown; bottom sheet
-   collapsed to the verdict and first card, drag up for the rest; warnings
-   folded into one small line.
+4. **Phone layout:** *(done 2026-11-05: under 760 px the topbar is two rows,
+   all four event chips in equal columns, the weekday shown only when the
+   event is on another day; the colour key and every warning fold into one
+   small line under the verdict, tap to open, `src/render/notes.ts`; the
+   status line is dropped under a verdict. Salida drive 25 km at 390 × 844:
+   verdict and card 1 fully visible without scrolling. The drag-up sheet was
+   not needed for that and is not built)* topbar on two rows or an event
+   dropdown; bottom sheet collapsed to the verdict and first card, drag up
+   for the rest; warnings folded into one small line.
 5. **Missing tile = no data, not 0 m:** mark the ray as unknown and say so.
 6. **Cite or replace the refraction coefficient** (`src/geo.ts`).
 7. Write the hash after every search; fix the null style expression.
