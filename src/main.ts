@@ -22,6 +22,7 @@ import { clearSpotMarkers, renderSpotMarkers } from "./render/spots";
 import { gridCandidates, gridSpacingM, type Candidate } from "./search/grid";
 import { nameSkylinePoints, type SkylineFeature } from "./search/horizonFeature";
 import { landcoverAt } from "./search/landcover";
+import { verdict, VERDICT_MAX_CARDS } from "./search/verdict";
 import { fetchOsmCandidates } from "./search/osm";
 import type { TravelMode } from "./search/pois";
 import { buildRoadIndex, roadBandsM } from "./search/roads";
@@ -1050,7 +1051,7 @@ async function presentResults(
   await herePromise.catch(() => {});
   if (seq !== searchSeq) return; // cleared while the sky rings ran
 
-  const spots: RankedSpot[] = top.map((x, i) => {
+  const ranked: RankedSpot[] = top.map((x, i) => {
     const c = x.candidate;
     const localTime = eventTimeAt(ev.kind, c.lat, c.lon, ev.time) ?? ev.time;
     return {
@@ -1065,6 +1066,19 @@ async function presentResults(
       effect: obstructionEffect(ev.kind, c.lat, c.lon, localTime, x.result.obstructionDeg),
     };
   });
+
+  // Lead with the verdict: when nothing in the ring is worth the trip, one
+  // line says so and only a few cards follow (docs/salida-test.md, item 3).
+  const answer =
+    here && here.kind === ev.kind && ranked.length
+      ? verdict({
+          kind: ev.kind,
+          radiusKm: state.radiusKm,
+          hereLostMin: here.effect.lostMin,
+          bestGainMin: Math.max(...ranked.map((s) => here!.effect.lostMin - s.effect.lostMin)),
+        })
+      : null;
+  const spots = answer ? ranked.slice(0, VERDICT_MAX_CARDS) : ranked;
 
   renderSpotMarkers(
     map,
@@ -1084,12 +1098,12 @@ async function presentResults(
     : "No results — try a larger radius.";
 
   resultsEl.innerHTML = "";
-  const bestGain = here && here.kind === ev.kind ? Math.max(...spots.map((s) => here!.effect.lostMin - s.effect.lostMin)) : null;
-  if (bestGain !== null && spots.length && bestGain <= 1) {
-    const note = document.createElement("div");
-    note.className = "note";
-    note.textContent = "Nothing in this ring beats where you are — stay put.";
-    resultsEl.appendChild(note);
+  if (answer) {
+    const line = document.createElement("div");
+    line.id = "verdict";
+    line.className = `verdict-line ${answer.kind}`;
+    line.textContent = answer.text;
+    resultsEl.appendChild(line);
   }
   if (stats) {
     const legend = document.createElement("div");
