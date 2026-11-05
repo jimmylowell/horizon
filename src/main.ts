@@ -1197,7 +1197,7 @@ async function presentResults(
   statusEl.textContent = answer
     ? ""
     : spots.length && facingAway()
-    ? `${eventLabel(ev.kind)} ${timeFmt.format(ev.time)}; facing away, az ${Math.round(lookAzimuth(ev))}° ±${AWAY_SPREAD_DEG}°. Lowest skies within ${state.radiusKm} km:`
+    ? `Facing away, az ${Math.round(lookAzimuth(ev))}° ±${AWAY_SPREAD_DEG}°. Lowest skies:`
     : spots.length
     ? `${eventLabel(ev.kind)} ${timeFmt.format(ev.time)}, az ${Math.round(ev.azimuthDeg)}°. Best spots within ${state.radiusKm} km:`
     : "No results — try a larger radius.";
