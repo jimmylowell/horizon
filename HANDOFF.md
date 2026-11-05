@@ -21,11 +21,20 @@ the sweep is now at most half a tile with a matching pad. `npm test` (48) and
 *Horizon* (§ Simple method—Young); it was an uncited *k* ≈ 0.13. *From here*
 reads the same before and after, Salida −25 min and Denver −16 min.
 
-**Next:** item 7, the URL hash after a button search and the null style
-expression. When PR #1 (`docs/design.md`) merges, its "One uncited number"
-paragraph under the data sources is stale: replace it with one line saying
-the radius is 7/6 R per Wikipedia's *Horizon*, *Simple method—Young*. It is
-not on this branch, so it could not be edited here without a conflict.
+Item 7, 2026-11-05: `runSearch()` writes the
+permalink hash before every search, so a search on the opening inputs is
+shareable; the three "found null" warnings on a Denver load came from the
+OpenFreeMap style's highway-shield filters (`ref_length` missing on roads
+with no `ref`), and `src/render/basemap.ts` guards them with the style's own
+`typeof` check through `setStyle(…, { transformStyle })`. `npm test` (52) and
+`npm run build` pass.
+
+**Next:** item 8, measure scoring time on a real phone before optimising it;
+that needs Jimmy's phone, not a run. When PR #1 (`docs/design.md`) merges, its
+"One uncited number" paragraph under the data sources is stale: replace it
+with one line saying the radius is 7/6 R per Wikipedia's *Horizon*, *Simple
+method—Young*. It is not on this branch, so it could not be edited here
+without a conflict.
 
 **Decided:** the verdict cut is 7 min, not the doc's "~5": the Salida test
 called +2 to +7 "nothing nearby is much better", and Jimmy's own example line
@@ -34,7 +43,9 @@ was enough to put card 1 above the fold. A spot across missing terrain is
 ranked last rather than dropped: it may well be the best one, and the card
 says what is not known. A terrarium tile that 404s over the ocean would now
 read as unknown rather than sea level; AWS terrarium covers the oceans with
-bathymetry, so that should not happen. Refraction uses the cited 7/6 R
+bathymetry, so that should not happen. The basemap is repaired in code rather than
+forked: the style stays OpenFreeMap's, fetched live, and the guard only
+narrows filters, so a style update cannot break it. Refraction uses the cited 7/6 R
 rather than keeping 0.13 with a citation: no Wikipedia page gives 0.13, and
 the switch moves no minute in Salida or Denver.
 

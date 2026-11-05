@@ -17,6 +17,7 @@ import {
 } from "./astro";
 import { destination, flatDistanceM, type LatLon } from "./geo";
 import { ringAzimuths } from "./elevation/horizon";
+import { repairBasemapStyle } from "./render/basemap";
 import { clearHeatmap, renderHeatmap, type ScorePoint } from "./render/heatmap";
 import { clearSpotMarkers, renderSpotMarkers } from "./render/spots";
 import { gridCandidates, gridSpacingM, type Candidate } from "./search/grid";
@@ -117,11 +118,13 @@ readHash();
 
 const map = new MapLibreMap({
   container: "map",
-  style: "https://tiles.openfreemap.org/styles/liberty",
   center: [state.loc.lon, state.loc.lat],
   zoom: 10,
   attributionControl: { compact: true },
 });
+// Set after construction so the fetched style can be repaired before it is
+// committed (render/basemap.ts: null-safe number filters).
+map.setStyle("https://tiles.openfreemap.org/styles/liberty", { transformStyle: repairBasemapStyle });
 let mapReady = false;
 map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
 const geolocate = new GeolocateControl({
@@ -824,6 +827,9 @@ goBtn.addEventListener("click", () => void runSearch());
 async function runSearch(): Promise<void> {
   const ev = state.events[state.kind];
   if (!ev || state.searching) return;
+  // Every search leaves its permalink, including one on the opening inputs,
+  // which no control change has written yet.
+  writeHash();
   state.searching = true;
   goBtn.disabled = true;
   try {

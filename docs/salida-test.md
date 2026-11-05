@@ -126,6 +126,14 @@ permalink, Denver drive 25 km permalink, Denver via the locate button.
    (−16 min), ridge 2.0°, 57 km" both times. The change drops a 57 km ridge
    by about 3 m, under 0.01°, so no minute moves)*
 7. Write the hash after every search; fix the null style expression.
+   *(done 2026-11-05: `runSearch()` writes the hash before it starts, so a
+   search on the opening inputs leaves `#38.53470,-105.99890,sunset,drive,25`
+   and reloading it gives the same verdict and three cards. The warnings came
+   from the OpenFreeMap basemap, not our layers: its highway-shield filters
+   compare `["get", "ref_length"]` with 6, and a road with no `ref` gives
+   null. `src/render/basemap.ts` adds the style's own `typeof … == "number"`
+   guard to every such comparison as the style loads; a Denver load now logs
+   none)*
 8. Measure scoring time on a real phone before optimising it.
 
 ## Proposed v2
