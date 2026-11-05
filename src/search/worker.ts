@@ -29,6 +29,11 @@ export interface SearchRequest {
   eyeHeightM: number;
   /** Fetch OSM building footprints and march them as near-field blockers. */
   buildings: boolean;
+  /**
+   * Score against the building raster of this earlier search instead of
+   * fetching footprints again (the OSM pass after the terrain-first pass).
+   */
+  reuseObstaclesOf?: number;
   candidates: { id: string; lat: number; lon: number }[];
 }
 
@@ -171,10 +176,16 @@ async function handleSearch(req: SearchRequest): Promise<void> {
     ),
     req.buildings ? fetchBuildings(req.origin, req.radiusM) : Promise.resolve(null),
   ]);
-  const obstacles: ObstacleField | undefined = grid
+  let obstacles: ObstacleField | undefined = grid
     ? { sample: grid.sample, maxDistM: BUILDING_RANGE_M, stepM: grid.cellM }
     : undefined;
-  lastObstacles = { searchRequestId: req.requestId, obstacles };
+  if (req.reuseObstaclesOf !== undefined) {
+    // Second pass of one search: keep the first pass's raster (and keep it
+    // as the one the ring follow-up asks for).
+    if (lastObstacles.searchRequestId === req.reuseObstaclesOf) obstacles = lastObstacles.obstacles;
+  } else {
+    lastObstacles = { searchRequestId: req.requestId, obstacles };
+  }
 
   const stepM = Math.max(40, metersPerPixel(req.origin.lat, req.zoom));
   const results: CandidateResult[] = [];

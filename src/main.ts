@@ -22,8 +22,9 @@ import { clearSpotMarkers, renderSpotMarkers } from "./render/spots";
 import { gridCandidates, gridSpacingM, type Candidate } from "./search/grid";
 import { nameSkylinePoints, type SkylineFeature } from "./search/horizonFeature";
 import { landcoverAt } from "./search/landcover";
-import { fetchPois, type TravelMode } from "./search/pois";
-import { buildRoadIndex, fetchRoadCandidates, roadBandsM } from "./search/roads";
+import { fetchOsmCandidates } from "./search/osm";
+import type { TravelMode } from "./search/pois";
+import { buildRoadIndex, roadBandsM } from "./search/roads";
 import {
   OPEN_SKY_MAX_DEG,
   lostGrade,
@@ -523,7 +524,11 @@ function refreshEvents(): void {
 }
 
 /** Blank slate: drop everything the last search drew and listed. */
+/** Bumped by every search and every clear, so a late OSM answer can tell it is stale. */
+let searchSeq = 0;
+
 function clearResults(): void {
+  searchSeq++;
   lastSearch = null;
   inspectPopup?.remove();
   inspectPopup = null;
@@ -799,22 +804,21 @@ async function search(ev: SkyEvent): Promise<void> {
   // Results draw onto the basemap; a tap before the style has loaded waits for it.
   if (!mapReady) await new Promise<void>((resolve) => map.once("load", () => resolve()));
   clearResults();
-  statusEl.textContent = "Looking up roads and places (OpenStreetMap)…";
+  const seq = searchSeq;
+  statusEl.textContent = "Fetching elevation tiles…";
 
+  // Terrain first, OpenStreetMap alongside: the grid is scored and shown as
+  // soon as tiles are in; roads and places (one capped Overpass lookup) are
+  // scored and merged in when they arrive. Overpass never holds the screen.
   const radiusM = state.radiusKm * 1000;
   const grid = gridCandidates(state.loc, radiusM);
-  const [{ pois, ok: poisOk }, { roads, ok: roadsOk }] = await Promise.all([
-    fetchPois(state.loc, radiusM, state.mode),
-    fetchRoadCandidates(state.loc, radiusM, state.mode, ROAD_MAX_CANDIDATES),
-  ]);
-  statusEl.textContent = roadsOk
-    ? `${roads.length} roadside points, ${pois.length} mapped places — fetching terrain…`
-    : "⚠ Road lookup (Overpass) unavailable — scoring open terrain instead…";
-
-  const candidates: Candidate[] = [...grid, ...roads, ...pois];
-  const req: SearchRequest = {
-    type: "search",
-    requestId: ++requestId,
+  const osmPromise = fetchOsmCandidates(state.loc, radiusM, state.mode, ROAD_MAX_CANDIDATES);
+  const progress = (phase: ProgressPhase, done: number, total: number) => {
+    statusEl.textContent =
+      phase === "tiles" ? `Fetching elevation tiles… ${done}/${total}` : `Scoring horizons… ${done}/${total}`;
+  };
+  const base = {
+    type: "search" as const,
     origin: state.loc,
     radiusM,
     azimuthDeg: ev.azimuthDeg,
@@ -822,20 +826,46 @@ async function search(ev: SkyEvent): Promise<void> {
     maxDistM: RAY_REACH_M,
     zoom: zoomForRadius(radiusM),
     eyeHeightM: 2,
+  };
+  const gridReq: SearchRequest = {
+    ...base,
+    requestId: ++requestId,
     // Town-scale only: buildings matter angularly only up close, and a
     // drive-scale bbox over a metro is more than Overpass will serve.
     buildings: radiusM <= BUILDINGS_MAX_RADIUS_M,
-    candidates: candidates.map((c) => ({ id: c.id, lat: c.lat, lon: c.lon })),
+    candidates: grid.map((c) => ({ id: c.id, lat: c.lat, lon: c.lon })),
   };
+  const gridReply = await askWorker<SearchReply>(gridReq, progress);
+  if (seq !== searchSeq) return;
+  const buildingCount = gridReply.buildingCount;
+  await presentResults(grid, gridReply.results, ev, radiusM, "pending", buildingCount, gridReq.requestId);
 
-  const { results, buildingCount } = await askWorker<SearchReply>(req, (phase, done, total) => {
-    statusEl.textContent =
-      phase === "tiles"
-        ? `Fetching elevation tiles… ${done}/${total}`
-        : `Scoring horizons… ${done}/${total}`;
-  });
-
-  await presentResults(candidates, results, ev, radiusM, { poisOk, roadsOk }, buildingCount, req.requestId);
+  const osm = await osmPromise;
+  if (seq !== searchSeq) return; // cleared or superseded meanwhile
+  const extra: Candidate[] = [...osm.roads, ...osm.pois];
+  if (!osm.ok || !extra.length) {
+    await presentResults(grid, gridReply.results, ev, radiusM, osm.ok ? "ok" : "failed", buildingCount, gridReq.requestId);
+    return;
+  }
+  statusEl.textContent = `Adding ${osm.roads.length} roadside points and ${osm.pois.length} mapped places…`;
+  const osmReq: SearchRequest = {
+    ...base,
+    requestId: ++requestId,
+    buildings: false,
+    reuseObstaclesOf: gridReq.requestId,
+    candidates: extra.map((c) => ({ id: c.id, lat: c.lat, lon: c.lon })),
+  };
+  const osmReply = await askWorker<SearchReply>(osmReq, progress);
+  if (seq !== searchSeq) return;
+  await presentResults(
+    [...grid, ...extra],
+    [...gridReply.results, ...osmReply.results],
+    ev,
+    radiusM,
+    "ok",
+    buildingCount,
+    gridReq.requestId
+  );
 }
 
 /**
@@ -884,10 +914,12 @@ async function presentResults(
   results: CandidateResult[],
   ev: SkyEvent,
   radiusM: number,
-  ok: { poisOk: boolean; roadsOk: boolean },
+  /** OpenStreetMap roads and places: still coming, merged in, or unavailable. */
+  osm: "pending" | "ok" | "failed",
   buildingCount: number | null,
   searchRequestId: number
 ): Promise<void> {
+  const seq = searchSeq;
   const byId = new Map(results.map((r) => [r.id, r]));
   type Scored = {
     candidate: Candidate;
@@ -935,8 +967,10 @@ async function presentResults(
   }
 
   // Ranking pool: roadside samples are on a road by construction. Without
-  // them (Overpass down) fall back to raw grid cells, honestly flagged.
-  const terrainPool = ok.roadsOk ? roadScored : gridScored;
+  // them (Overpass slow, down, or nothing mapped) fall back to raw grid
+  // cells, honestly flagged.
+  const roadsIn = roadScored.length > 0;
+  const terrainPool = roadsIn ? roadScored : gridScored;
 
   // Reachability reality check for everything NOT sampled from a road: a
   // remote 13er tagged natural=peak is exactly what this must catch.
@@ -944,7 +978,7 @@ async function presentResults(
   const excluded = new Set<Scored>();
   if (roads) {
     const bands = roadBandsM(state.mode);
-    for (const x of [...poiScored, ...(ok.roadsOk ? [] : gridScored)]) {
+    for (const x of [...poiScored, ...(roadsIn ? [] : gridScored)]) {
       const d = roads.nearestRoadM(x.candidate);
       if (d === null || d > bands.exclude) {
         excluded.add(x); // not reachable in this travel mode; heatmap still shows it
@@ -1004,6 +1038,7 @@ async function presentResults(
 
   // Rank against where you are: the search waits for the origin's readout.
   await herePromise.catch(() => {});
+  if (seq !== searchSeq) return; // cleared while the sky rings ran
 
   const spots: RankedSpot[] = top.map((x, i) => {
     const c = x.candidate;
@@ -1056,19 +1091,23 @@ async function presentResults(
     legend.innerHTML = `<div class="bar"></div><div class="labels"><span>worse</span><span>${note}</span><span>better</span></div>`;
     resultsEl.appendChild(legend);
   }
-  if (!ok.roadsOk) {
+  if (osm === "pending") {
+    const note = document.createElement("div");
+    note.className = "note";
+    note.id = "osm-pending";
+    note.textContent = "Best by terrain so far — adding roads and named places from OpenStreetMap…";
+    resultsEl.appendChild(note);
+  } else if (osm === "failed") {
     const warn = document.createElement("div");
     warn.className = "warn";
     warn.textContent =
-      "⚠ OpenStreetMap road lookup is unavailable right now — terrain picks below are raw grid cells (access unverified). Try again in a minute for roadside spots.";
+      "⚠ OpenStreetMap didn't answer in 10 s — spots are by terrain alone (access unverified). Try again in a minute for roadside spots and named places.";
     resultsEl.appendChild(warn);
-  }
-  if (!ok.poisOk) {
-    const warn = document.createElement("div");
-    warn.className = "warn";
-    warn.textContent =
-      "⚠ OpenStreetMap place lookup is unavailable right now — no named viewpoints or parking in the results.";
-    resultsEl.appendChild(warn);
+  } else if (!roadsIn) {
+    const note = document.createElement("div");
+    note.className = "note";
+    note.textContent = "No mapped roads you can stop on in this ring — spots are by terrain alone.";
+    resultsEl.appendChild(note);
   }
   if (buildingCount === null) {
     const warn = document.createElement("div");

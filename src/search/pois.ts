@@ -10,7 +10,7 @@ import { overpassJson } from "./overpass";
 
 export type TravelMode = "walk" | "bike" | "drive";
 
-interface PoiCategory {
+export interface PoiCategory {
   id: string;
   label: string;
   match: Record<string, string>[];
@@ -23,7 +23,8 @@ export function categoriesForMode(mode: TravelMode): PoiCategory[] {
   return (catalog.categories as PoiCategory[]).filter((c) => c.modes.includes(mode));
 }
 
-function compileQuery(cats: PoiCategory[], bbox: [number, number, number, number]): string {
+/** The Overpass union selecting the catalog's places in the bbox (no output line). */
+export function poiUnionClause(cats: PoiCategory[], bbox: [number, number, number, number]): string {
   const [s, w, n, e] = bbox;
   const clauses = cats
     .flatMap((c) => c.match)
@@ -34,7 +35,46 @@ function compileQuery(cats: PoiCategory[], bbox: [number, number, number, number
       return `nwr${tags}(${s},${w},${n},${e});`;
     })
     .join("\n  ");
-  return `[out:json][timeout:20];\n(\n  ${clauses}\n);\nout center qt 1200;`;
+  return `(\n  ${clauses}\n);`;
+}
+
+/** Output line for the place union: centres, capped. */
+export const POI_OUT = "out center qt 1200;";
+
+function compileQuery(cats: PoiCategory[], bbox: [number, number, number, number]): string {
+  return `[out:json][timeout:10];\n${poiUnionClause(cats, bbox)}\n${POI_OUT}`;
+}
+
+export function poiBBox(centre: LatLon, radiusM: number): [number, number, number, number] {
+  const dLat = radiusM / 111_320;
+  const dLon = radiusM / (111_320 * Math.cos((centre.lat * Math.PI) / 180));
+  return [centre.lat - dLat, centre.lon - dLon, centre.lat + dLat, centre.lon + dLon];
+}
+
+/**
+ * Place candidates from an Overpass reply. Road ways from a merged query
+ * carry `geometry` and no `center`, and are skipped here.
+ */
+export function poisFromElements(elements: OverpassElement[], cats: PoiCategory[]): Candidate[] {
+  const out: Candidate[] = [];
+  for (const el of elements) {
+    if ((el as { geometry?: unknown }).geometry) continue;
+    const lat = el.lat ?? el.center?.lat;
+    const lon = el.lon ?? el.center?.lon;
+    if (lat === undefined || lon === undefined || !el.tags) continue;
+    const cat = categoryOf(el.tags, cats);
+    if (!cat) continue;
+    out.push({
+      id: `p:${el.type}/${el.id}`,
+      source: cat.id,
+      label: cat.label,
+      name: el.tags.name,
+      weight: cat.weight,
+      lat,
+      lon,
+    });
+  }
+  return postProcess(out, cats);
 }
 
 export interface OverpassElement {
@@ -82,34 +122,9 @@ export async function fetchPois(
 ): Promise<PoiFetchResult> {
   const cats = categoriesForMode(mode);
   if (cats.length === 0) return { pois: [], ok: true };
-  const dLat = radiusM / 111_320;
-  const dLon = radiusM / (111_320 * Math.cos((centre.lat * Math.PI) / 180));
-  const bbox: [number, number, number, number] = [
-    centre.lat - dLat,
-    centre.lon - dLon,
-    centre.lat + dLat,
-    centre.lon + dLon,
-  ];
-  const elements = await overpassQuery(compileQuery(cats, bbox));
+  const elements = await overpassQuery(compileQuery(cats, poiBBox(centre, radiusM)));
   if (elements === null) return { pois: [], ok: false };
-  const out: Candidate[] = [];
-  for (const el of elements) {
-    const lat = el.lat ?? el.center?.lat;
-    const lon = el.lon ?? el.center?.lon;
-    if (lat === undefined || lon === undefined || !el.tags) continue;
-    const cat = categoryOf(el.tags, cats);
-    if (!cat) continue;
-    out.push({
-      id: `p:${el.type}/${el.id}`,
-      source: cat.id,
-      label: cat.label,
-      name: el.tags.name,
-      weight: cat.weight,
-      lat,
-      lon,
-    });
-  }
-  return { pois: postProcess(out, cats), ok: true };
+  return { pois: poisFromElements(elements, cats), ok: true };
 }
 
 /**

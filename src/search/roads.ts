@@ -270,23 +270,37 @@ export function sampleRoads(
   }
 }
 
-/** Roads you can stop on within the ring, sampled into candidates. */
+/** The Overpass statement selecting stoppable roads in the ring (no output line). */
+export function roadQueryClause(centre: LatLon, radiusM: number, mode: TravelMode): string {
+  const classes = ROAD_CLASSES[mode].filter(
+    (c) => radiusM <= RESIDENTIAL_MAX_RADIUS_M || (c !== "residential" && c !== "living_street")
+  );
+  return (
+    `way["highway"~"^(${classes.join("|")})$"]["access"!~"^(private|no)$"]` +
+    `(around:${Math.round(radiusM)},${centre.lat.toFixed(5)},${centre.lon.toFixed(5)});`
+  );
+}
+
+/** Sample the road ways (elements carrying `geometry`) out of an Overpass reply. */
+export function roadsFromElements(
+  elements: unknown[],
+  centre: LatLon,
+  radiusM: number,
+  maxCount: number
+): Candidate[] {
+  const ways = (elements as RoadWay[]).filter((e) => Array.isArray(e.geometry) && e.tags);
+  return sampleRoads(ways, centre, radiusM, roadSpacingM(radiusM), maxCount);
+}
+
+/** Roads you can stop on within the ring, sampled into candidates (own request). */
 export async function fetchRoadCandidates(
   centre: LatLon,
   radiusM: number,
   mode: TravelMode,
   maxCount: number
 ): Promise<RoadFetchResult> {
-  const classes = ROAD_CLASSES[mode].filter(
-    (c) => radiusM <= RESIDENTIAL_MAX_RADIUS_M || (c !== "residential" && c !== "living_street")
-  );
-  const query =
-    `[out:json][timeout:25];\n` +
-    `way["highway"~"^(${classes.join("|")})$"]["access"!~"^(private|no)$"]` +
-    `(around:${Math.round(radiusM)},${centre.lat.toFixed(5)},${centre.lon.toFixed(5)});\n` +
-    `out geom qt;`;
+  const query = `[out:json][timeout:10];\n${roadQueryClause(centre, radiusM, mode)}\nout geom qt;`;
   const json = await overpassJson<{ elements: RoadWay[] }>(query);
   if (!json) return { roads: [], ok: false };
-  const ways = json.elements.filter((e) => Array.isArray(e.geometry) && e.tags);
-  return { roads: sampleRoads(ways, centre, radiusM, roadSpacingM(radiusM), maxCount), ok: true };
+  return { roads: roadsFromElements(json.elements, centre, radiusM, maxCount), ok: true };
 }

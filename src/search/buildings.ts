@@ -130,8 +130,10 @@ export async function fetchBuildings(
   const dLat = halfM / M_PER_DEG_LAT;
   const dLon = halfM / (M_PER_DEG_LAT * Math.cos((centre.lat * Math.PI) / 180));
   const bbox = `${centre.lat - dLat},${centre.lon - dLon},${centre.lat + dLat},${centre.lon + dLon}`;
-  const query = `[out:json][timeout:45];\nway["building"]["building"!="no"](${bbox});\nout geom qt ${MAX_WAYS};`;
-  const json = await overpassJson<{ elements: OverpassWay[] }>(query, 50_000);
+  // Fetched alongside the terrain tiles, so it holds up the first answer:
+  // capped like the road lookup (a little longer; the payload is bigger).
+  const query = `[out:json][timeout:12];\nway["building"]["building"!="no"](${bbox});\nout geom qt ${MAX_WAYS};`;
+  const json = await overpassJson<{ elements: OverpassWay[] }>(query, 12_000);
   if (!json) return null;
   return buildGrid(json.elements, centre, halfM);
 }
