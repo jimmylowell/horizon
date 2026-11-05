@@ -113,7 +113,18 @@ permalink, Denver drive 25 km permalink, Denver via the locate button.
    and skipped the tiles in between, which read as 0 m, so From here in
    Denver under-read the Front Range; the sweep is now at most half a tile)*
    mark the ray as unknown and say so.
-6. **Cite or replace the refraction coefficient** (`src/geo.ts`).
+6. **Cite or replace the refraction coefficient** (`src/geo.ts`). *(done
+   2026-11-05: replaced with the cited value. Wikipedia's
+   [Horizon](https://en.wikipedia.org/wiki/Horizon#Simple_method%E2%80%94Young)
+   (*Effect of atmospheric refraction*, *Simple method—Young*, citing A. T.
+   Young's "Distance to the Horizon", SDSU) gives an effective radius
+   R′ = 7/6 R for visible light, i.e. *k* = 1/7 ≈ 0.143; the same page gives
+   4/3 R for radar, which is not our case. *Atmospheric refraction* and
+   *Line-of-sight propagation* give the formula or the radio figure only.
+   From here, same day, before and after: Salida sunset "Behind the ridge
+   ~4:34 PM (−25 min), ridge 3.7°, 21 km" both times; Denver "~4:37 PM
+   (−16 min), ridge 2.0°, 57 km" both times. The change drops a 57 km ridge
+   by about 3 m, under 0.01°, so no minute moves)*
 7. Write the hash after every search; fix the null style expression.
 8. Measure scoring time on a real phone before optimising it.
 
