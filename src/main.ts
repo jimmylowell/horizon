@@ -26,6 +26,7 @@ import { landcoverAt } from "./search/landcover";
 import { verdict, VERDICT_MARGIN_MIN, VERDICT_MAX_CARDS } from "./search/verdict";
 import { resultNotes } from "./render/notes";
 import { noDataFlag, spotReading } from "./search/reading";
+import { AWAY_SPREAD_DEG, awayAzimuth, awayGainVsHere, awayReading, canFaceAway } from "./search/away";
 import { fetchOsmCandidates } from "./search/osm";
 import type { TravelMode } from "./search/pois";
 import { buildRoadIndex, roadBandsM } from "./search/roads";
@@ -57,6 +58,8 @@ interface State {
   events: Partial<Record<EventKind, SkyEvent>>;
   golden: Partial<Record<EventKind, GoldenHourSpan>>;
   searching: boolean;
+  /** Which sky the search is for: toward the sun, or the sky opposite it (sun events only). */
+  facing: "sun" | "away";
 }
 
 const MODE_DEFAULT_KM: Record<TravelMode, number> = { walk: 2, bike: 8, drive: 25 };
@@ -70,7 +73,21 @@ const state: State = {
   events: {},
   golden: {},
   searching: false,
+  facing: "sun",
 };
+
+/** True when the search looks at the sky opposite the sun (src/search/away.ts). */
+function facingAway(): boolean {
+  return state.facing === "away" && canFaceAway(state.kind);
+}
+/** Bearing the rays are marched along: the event, or straight opposite it. */
+function lookAzimuth(ev: SkyEvent): number {
+  return facingAway() ? awayAzimuth(ev.azimuthDeg) : ev.azimuthDeg;
+}
+/** Half-width of the fan: ±8° on the event line, ±30° over the sky opposite. */
+function lookSpread(): number {
+  return facingAway() ? AWAY_SPREAD_DEG : 8;
+}
 
 function todayStr(): string {
   const d = new Date();
@@ -84,7 +101,7 @@ function baseTime(): Date {
   return new Date(y, m - 1, d, 0, 0, 0);
 }
 
-// Permalink: #lat,lon,kind,mode,radius[,date]
+// Permalink: #lat,lon,kind,mode,radius[,date][,away]
 /** True when the page opened on a shared/bookmarked permalink (auto-searches). */
 let openedFromHash = false;
 function readHash(): void {
@@ -101,6 +118,7 @@ function readHash(): void {
     const r = parseFloat(m[4]);
     if (Number.isFinite(r)) state.radiusKm = Math.min(40, Math.max(1, r));
     if (m[5] && /^\d{4}-\d{2}-\d{2}$/.test(m[5])) state.date = m[5];
+    if (m.slice(5).includes("away")) state.facing = "away";
   }
 }
 function writeHash(): void {
@@ -108,7 +126,7 @@ function writeHash(): void {
   history.replaceState(
     null,
     "",
-    `#${state.loc.lat.toFixed(5)},${state.loc.lon.toFixed(5)},${state.kind},${state.mode},${state.radiusKm}${date}`
+    `#${state.loc.lat.toFixed(5)},${state.loc.lon.toFixed(5)},${state.kind},${state.mode},${state.radiusKm}${date}${facingAway() ? ",away" : ""}`
   );
 }
 
@@ -190,7 +208,7 @@ map.on("click", (e) => {
       if (best) {
         const ev = lastSearch.ev;
         const eff = obstructionEffect(ev.kind, best.lat, best.lon, ev.time, best.obstructionDeg);
-        const v = effectLabel(ev.kind, eff);
+        const v = facingAway() ? awayReading(best.obstructionDeg, false) : effectLabel(ev.kind, eff);
         const gain = gainVsHere(eff);
         inspectPopup?.remove();
         inspectPopup = new Popup({ closeButton: false })
@@ -283,9 +301,12 @@ function drawAzimuth(): void {
     if (!ev) continue;
     lines.push(azimuthLine(ev.azimuthDeg, kind, false));
     if (kind === state.kind) {
-      // Search wedge: matches the ±spreadDeg the scorer uses.
-      lines.push(azimuthLine(ev.azimuthDeg - 8, kind, true));
-      lines.push(azimuthLine(ev.azimuthDeg + 8, kind, true));
+      // Search wedge: matches the ±spreadDeg the scorer uses, toward the
+      // event or, facing away, over the sky opposite it.
+      const az = lookAzimuth(ev);
+      if (facingAway()) lines.push(azimuthLine(az, kind, false));
+      lines.push(azimuthLine(az - lookSpread(), kind, true));
+      lines.push(azimuthLine(az + lookSpread(), kind, true));
     }
     const gh = state.golden[kind];
     if (gh) sectors.push(azimuthSector(gh.startAzDeg, gh.endAzDeg, kind));
@@ -484,6 +505,7 @@ function effectLabel(
 function gainVsHere(eff: ObstructionEffect, noData = false): { text: string; cls: string; min: number } | null {
   // A gain against missing terrain, on either side, would be made up.
   if (!here || here.kind !== state.kind || noData || here.noData) return null;
+  if (facingAway()) return null; // compared in degrees instead (awayGainVsHere)
   const min = here.effect.lostMin - eff.lostMin;
   if (min > 0) return { text: `+${min} min vs here`, cls: "good", min };
   if (min < 0) return { text: `${min} min vs here`, cls: "bad", min };
@@ -512,12 +534,33 @@ function renderEventPicker(): void {
       state.kind = kind;
       clearResults(); // results were scored along the old event's azimuth
       renderEventPicker();
+      renderFacing();
       drawAzimuth();
       void probeHere();
       writeHash();
     });
     eventsNav.appendChild(btn);
   }
+}
+
+/** Sun / Away toggle: shown for sun events only; the choice is kept across event changes. */
+const facingEl = document.getElementById("facing")!;
+const facingBtns = [...facingEl.querySelectorAll<HTMLButtonElement>("button")];
+function renderFacing(): void {
+  facingEl.hidden = !canFaceAway(state.kind);
+  for (const b of facingBtns) setPressed(b, b.dataset.facing === (facingAway() ? "away" : "sun"));
+}
+for (const b of facingBtns) {
+  b.addEventListener("click", () => {
+    const f = b.dataset.facing === "away" ? "away" : "sun";
+    if (f === state.facing) return;
+    state.facing = f;
+    clearResults(); // results were scored along the other direction
+    renderFacing();
+    drawAzimuth();
+    void probeHere();
+    writeHash();
+  });
 }
 
 function refreshEvents(): void {
@@ -534,6 +577,7 @@ function refreshEvents(): void {
     if (firstAvailable) state.kind = firstAvailable;
   }
   renderEventPicker();
+  renderFacing();
   drawAzimuth();
   void probeHere();
 }
@@ -707,8 +751,8 @@ async function doProbeHere(): Promise<void> {
       type: "probe",
       requestId: id,
       point: loc,
-      azimuthDeg: ev.azimuthDeg,
-      spreadDeg: 8,
+      azimuthDeg: lookAzimuth(ev),
+      spreadDeg: lookSpread(),
       maxDistM: RAY_REACH_M,
       zoom: PROBE_ZOOM,
       eyeHeightM: 2,
@@ -799,7 +843,13 @@ function renderHere(note?: string): void {
   const behind = here.skyline
     ? ` · behind ${here.skyline.name}${here.skyline.eleM !== undefined ? ` (${Math.round(here.skyline.eleM).toLocaleString()} m)` : ""}`
     : "";
-  const grade = here.noData ? "u" : lostGrade(effect.lostMin);
+  let grade: number | "u" = here.noData ? "u" : lostGrade(effect.lostMin);
+  if (facingAway()) {
+    // Opposite the sun the minutes don't apply: the reading is how low the sky goes.
+    const r = awayReading(here.obstructionDeg, here.noData);
+    main = r.label;
+    grade = r.grade;
+  }
   hereEl.innerHTML = `<div class="here-main g${grade}"></div><div class="here-sub"></div>`;
   hereEl.querySelector(".here-main")!.textContent = main;
   hereEl.querySelector(".here-sub")!.textContent = `${facts}${ridge}${behind}${golden}`;
@@ -864,8 +914,8 @@ async function search(ev: SkyEvent): Promise<void> {
     type: "search" as const,
     origin: state.loc,
     radiusM,
-    azimuthDeg: ev.azimuthDeg,
-    spreadDeg: 8,
+    azimuthDeg: lookAzimuth(ev),
+    spreadDeg: lookSpread(),
     maxDistM: RAY_REACH_M,
     zoom: zoomForRadius(radiusM),
     eyeHeightM: 2,
@@ -1117,8 +1167,9 @@ async function presentResults(
   const known = ranked.filter((s) => !s.result.noData);
   const unknownMightWin =
     !!here && ranked.some((s) => s.result.noData && here!.effect.lostMin - s.effect.lostMin > VERDICT_MARGIN_MIN);
+  // The verdict is in minutes of the event, which facing away has none of.
   const answer =
-    here && here.kind === ev.kind && !here.noData && known.length && !unknownMightWin
+    !facingAway() && here && here.kind === ev.kind && !here.noData && known.length && !unknownMightWin
       ? verdict({
           kind: ev.kind,
           radiusKm: state.radiusKm,
@@ -1145,6 +1196,8 @@ async function presentResults(
   // cost card 1 its place above the fold on a phone.
   statusEl.textContent = answer
     ? ""
+    : spots.length && facingAway()
+    ? `${eventLabel(ev.kind)} ${timeFmt.format(ev.time)}; facing away, az ${Math.round(lookAzimuth(ev))}° ±${AWAY_SPREAD_DEG}°. Lowest skies within ${state.radiusKm} km:`
     : spots.length
     ? `${eventLabel(ev.kind)} ${timeFmt.format(ev.time)}, az ${Math.round(ev.azimuthDeg)}°. Best spots within ${state.radiusKm} km:`
     : "No results — try a larger radius.";
@@ -1284,8 +1337,13 @@ function spotCard(s: RankedSpot): HTMLElement {
   const isPoi = !isRoad && c.source !== "grid";
   const name = c.name ?? (isRoad ? "Roadside" : isPoi ? c.label! : "Open terrain");
   const chip = isPoi || isRoad ? c.label! : "access unverified";
-  const v = effectLabel(kind, s.effect, s.result.noData);
-  const gain = gainVsHere(s.effect, s.result.noData);
+  const away = facingAway();
+  const v = away ? awayReading(s.result.obstructionDeg, s.result.noData) : effectLabel(kind, s.effect, s.result.noData);
+  const gain = away
+    ? here && here.kind === kind && !here.noData
+      ? awayGainVsHere(s.result.obstructionDeg, here.obstructionDeg, s.result.noData)
+      : null
+    : gainVsHere(s.effect, s.result.noData);
 
   const el = document.createElement("article");
   el.className = "spot-card";

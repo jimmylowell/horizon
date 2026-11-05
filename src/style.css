@@ -168,11 +168,13 @@ body {
   gap: 8px;
   padding: 10px 12px;
 }
-#modes {
+#modes,
+#facing {
   display: flex;
   gap: 4px;
 }
-#modes button {
+#modes button,
+#facing button {
   border: 1px solid var(--hairline);
   background: var(--surface-raised);
   color: var(--text);
@@ -181,7 +183,8 @@ body {
   border-radius: 8px;
   cursor: pointer;
 }
-#modes button.active {
+#modes button.active,
+#facing button.active {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-ink);
@@ -504,3 +507,7 @@ body {
   font-weight: 600;
   text-decoration: none;
 }
+
+#facing[hidden] { display: none; }
+#method { margin: 4px 12px; }
+#method p { margin: 6px 0; }
