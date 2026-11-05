@@ -1,59 +1,42 @@
 # Handoff
 
-**State:** Fix list items 1 to 5 of `docs/salida-test.md` are done on this
-branch (PR #2), and finding 5 (the Denver legend) is settled by the item 4
-fold with no change. *Find spots* scores terrain first and shows spots in
-about 4 s whether Overpass answers or not; a verdict line leads when nothing
-gains more than 7 min; under 760 px the chips sit on their own row and the
-legend and warnings fold into one tappable line. Item 5, 2026-11-05: a
-terrain tile that fails to load is no data, not 0 m. `sampleElevation()`
-returns NaN for it, a ray across it is `noData` (its angle a minimum), a
-sky-ring direction across it never counts as open, and a spot standing on it
-is dropped. Cards with a gap read "or earlier (−6 min or more)" in grey
-italics with a warning line, rank after every spot with full data, show no
-"vs here" gain, and are left off the heatmap; the folded line says
-"⚠ terrain gaps"; no verdict while an unknown spot could still beat the cut.
-The same fix exposed the probe's tile prefetch skipping tiles between 15 km
-sweep points (they read as 0 m, so *From here* under-read distant ranges);
-the sweep is now at most half a tile with a matching pad. `npm test` (48) and
-`npm run build` pass. Item 6, 2026-11-05: the effective earth radius in
-`src/geo.ts` is now 7/6 R (*k* = 1/7), cited in the code to Wikipedia's
-*Horizon* (§ Simple method—Young); it was an uncited *k* ≈ 0.13. *From here*
-reads the same before and after, Salida −25 min and Denver −16 min.
+**State:** PR #2 (this branch) carries the Salida test and its fix list,
+items 1 to 7 done (details in `docs/salida-test.md`), and round two from
+Jimmy's answer of 2026-11-05:
 
-Item 7, 2026-11-05: `runSearch()` writes the
-permalink hash before every search, so a search on the opening inputs is
-shareable; the three "found null" warnings on a Denver load came from the
-OpenFreeMap style's highway-shield filters (`ref_length` missing on roads
-with no `ref`), and `src/render/basemap.ts` guards them with the style's own
-`typeof` check through `setStyle(…, { transformStyle })`. `npm test` (52) and
-`npm run build` pass.
+- **One sun definition.** Rise and set, open or behind a ridge, are the
+  moment the top edge of the disc, seen through the air, meets the horizon
+  line (`centreAltitudeForTopEdge` in `src/astro.ts`). Before, the ridge time
+  tracked the disc's centre with no refraction (`SearchAltitude`), which ran
+  2 to 4 min early against the open `SearchRiseSet` time. The page says how
+  times are worked out, citing Wikipedia's *Sunset*.
+- **Away mode.** A *Sun / Away* toggle (sun events only; `,away` at the end of
+  the permalink) marches ±30° straight opposite the sun and grades a spot by
+  how low that sky goes, against the Belt of Venus band, 10–20° up
+  (Wikipedia, *Belt of Venus*). Logic and tests in `src/search/away.ts`.
+- Tested at 390 px from Riverside Park and the top of Tenderfoot Hill, both
+  modes, table in `docs/salida-test.md`. `npm test` (61) and `npm run build`
+  pass.
 
-**Next:** item 8, measure scoring time on a real phone before optimising it;
-that needs Jimmy's phone, not a run. When PR #1 (`docs/design.md`) merges, its
-"One uncited number" paragraph under the data sources is stale: replace it
-with one line saying the radius is 7/6 R per Wikipedia's *Horizon*, *Simple
-method—Young*. It is not on this branch, so it could not be edited here
-without a conflict.
+**Next:** Jimmy's evenings in Salida: check from Tenderfoot Hill that the
+ridge opposite the sunset sits about 7° up and the belt shows above it; time
+scoring on his phone (fix list item 8). When PR #1 (`docs/design.md`)
+merges, replace its stale "One uncited number" paragraph with one line: the
+radius is 7/6 R per Wikipedia's *Horizon*, *Simple method—Young*.
 
-**Decided:** the verdict cut is 7 min, not the doc's "~5": the Salida test
-called +2 to +7 "nothing nearby is much better", and Jimmy's own example line
-names 7. The drag-up bottom sheet in item 4 was not built: folding the notes
-was enough to put card 1 above the fold. A spot across missing terrain is
-ranked last rather than dropped: it may well be the best one, and the card
-says what is not known. A terrarium tile that 404s over the ocean would now
-read as unknown rather than sea level; AWS terrarium covers the oceans with
-bathymetry, so that should not happen. The basemap is repaired in code rather than
-forked: the style stays OpenFreeMap's, fetched live, and the guard only
-narrows filters, so a style update cannot break it. Refraction uses the cited 7/6 R
-rather than keeping 0.13 with a citation: no Wikipedia page gives 0.13, and
-the switch moves no minute in Salida or Denver.
+**Decided:** one definition everywhere, the published one, rather than
+centre-on-horizon: the minutes a spot gains are then terrain alone. Sea-level
+standard atmosphere, as the library's rise/set uses for an observer at 0 m;
+not corrected for Salida's thinner air. Away has no minutes verdict: its unit
+is degrees of sky, compared with here. The verdict cut is 7 min; a spot across
+missing terrain is ranked last, not dropped; refraction for terrain is 7/6 R.
+
+**Open:** the ridge is sampled at the open event's bearing (±8° fan), while
+behind a high ridge the sun goes down a few degrees further along its path;
+aiming the fan at the bearing where the sun meets the ridge would need a
+second march. Away averages three rays over 60°; a finer fan may read better.
+Whether v2 is the direction. Racing three Overpass mirrors.
 
 **Mirrors:** the three keyless worldwide instances on the OSM wiki's
-*Overpass API* page (overpass-api.de, maps.mail.ru, overpass.private.coffee);
-overpass.kumi.systems was dropped because the wiki lists it as private.coffee's
-old name. A mirror that answers 429, 406 or 5xx sits out 30 s, as the wiki asks.
-
-**Open:** whether v2 is the direction. Racing three mirrors sends each lookup
-to three operators; if that reads as rude, race two and keep the main one as
-the fallback.
+*Overpass API* page (overpass-api.de, maps.mail.ru, overpass.private.coffee).
+A mirror that answers 429, 406 or 5xx sits out 30 s, as the wiki asks.

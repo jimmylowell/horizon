@@ -155,3 +155,53 @@ go instead?"**
 What would show it is right: Jimmy opens it in Salida on his phone, gets the
 from-here time in under 5 s and a "go instead" answer in under 15 s, and the
 answer matches what he sees from that spot.
+
+## Round two: one sun definition, and facing away (2026-11-05)
+
+Jimmy, on the PR: "Seems like there's two perhaps functions here looking at
+the actual sun. And I'm curious how you're measuring that time of sunset. Is
+it actually when the sphere is on the horizon? My other question is an
+expansive view of the sky facing away from the sunset can be beautiful and
+I'd like to somehow incorporate that for testing these next few days or
+weeks. I'd like to do Salida in town someplace that I could walk to within 20
+minutes. There's plenty of options and the top of tender foothill could also
+work."
+
+**How sunset was timed, and the mismatch.** The open-horizon time came from
+astronomy-engine's `SearchRiseSet`, which finds "the top of the body crossing"
+the horizon, lowered by 34′ of refraction (its source and docs). The time
+behind a ridge came from `SearchAltitude`, which tracks the **centre** of the
+disc with no refraction; its docs say it "is not intended to find rise/set
+times". So yes, two functions: the ridge time ran early, and the minutes lost
+read 2 to 4 too many. Salida, 2026-11-05, open sunset 4:59 PM: a 1° ridge was
+−10 min, now −6; 3° was −21, now −18; 5° was −32, now −30.
+
+**Now one definition** (`centreAltitudeForTopEdge` in `src/astro.ts`): the
+moment the top edge of the disc, seen through the air, meets the horizon line,
+flat or ridge. It is Wikipedia's definition of sunset ("the moment the upper
+limb of the Sun disappears below the horizon",
+[Sunset](https://en.wikipedia.org/wiki/Sunset)); refraction is the library's
+"normal" formula at the ridge's height, and the disc's radius is worked out at
+the moment. A test checks that a flat horizon by this definition lands within
+30 s of the library's published sunset. The page now says this under *How the
+times are worked out*.
+
+**Facing away.** A *Sun / Away* toggle (sun events only, `,away` in the link)
+marches the rays straight opposite the sun across ±30° and grades a spot by
+how low that sky goes, against the Belt of Venus, "roughly 10–20° above the
+horizon" over Earth's shadow during twilight
+([Belt of Venus](https://en.wikipedia.org/wiki/Belt_of_Venus)): under 10° the
+belt is in full view, 10–20° the ridge cuts into it, above 20° it is hidden.
+Cards compare with here in degrees ("4.5° lower than here"); there is no
+minutes verdict.
+
+**The two walking spots,** sunset today, walk 2 km, at 390 px:
+
+| Spot | Sun | Away (az 70° ±30°) |
+|---|---|---|
+| Riverside Park, 38.53692, −105.98998 (OSM) | behind the ridge ~4:37 PM, −22 min, ridge 3.7° at 22 km; nowhere within 2 km more than 5 min better | horizon 9.3° up, 4 km away: belt just clear; the best card 4.8° up |
+| Tenderfoot Hill summit, 38.54171, −105.98705 (OSM peak) | behind the ridge ~4:40 PM, −19 min, ridge 3.2° at 22 km; the best within 2 km +6 min (forest flag) | horizon 6.9° up, 4 km away; the best card 5.0° up |
+
+Test on the hill: is the belt where the page puts it, and does the ridge
+opposite really sit about 7° up? This host could not load every terrain tile,
+so some cards were marked unknown in both modes.
