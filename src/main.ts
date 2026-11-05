@@ -708,18 +708,28 @@ async function doProbeHere(): Promise<void> {
       effect: obstructionEffect(ev.kind, loc.lat, loc.lon, ev.time, r.obstructionDeg),
     };
     renderHere();
-    if (!hitTerrain(r)) return;
+    // The ridge's name is decoration from Overpass: name it in the
+    // background, so a search waiting on this readout never waits on OSM.
+    void nameHereSkyline(id, loc, r);
+  } catch (err) {
+    console.error(err);
+    if (hereRequest === id) renderHere("Terrain data unavailable right now.");
+  }
+}
+
+async function nameHereSkyline(id: number, loc: LatLon, r: Omit<CandidateResult, "id">): Promise<void> {
+  try {
+    if (!here || !hitTerrain(r)) return;
     if (!mapReady) await new Promise<void>((resolve) => map.once("load", () => resolve()));
     if (hereRequest !== id) return;
     drawSightline(loc, { lat: r.horizonLat, lon: r.horizonLon }, null, "here-sightline");
     const [feature] = await nameSkylinePoints([{ lat: r.horizonLat, lon: r.horizonLon }]);
-    if (hereRequest !== id || !feature) return;
+    if (hereRequest !== id || !feature || !here) return;
     here.skyline = feature;
     renderHere();
     drawSightline(loc, { lat: r.horizonLat, lon: r.horizonLon }, feature.name, "here-sightline");
   } catch (err) {
-    console.error(err);
-    if (hereRequest === id) renderHere("Terrain data unavailable right now.");
+    console.error(err); // the readout stands without the ridge's name
   }
 }
 
@@ -1101,7 +1111,7 @@ async function presentResults(
     const warn = document.createElement("div");
     warn.className = "warn";
     warn.textContent =
-      "⚠ OpenStreetMap didn't answer in 10 s — spots are by terrain alone (access unverified). Try again in a minute for roadside spots and named places.";
+      "⚠ OpenStreetMap isn't answering right now — spots are by terrain alone (access unverified). Try again in a minute for roadside spots and named places.";
     resultsEl.appendChild(warn);
   } else if (!roadsIn) {
     const note = document.createElement("div");
