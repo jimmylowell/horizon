@@ -39,4 +39,11 @@ describe("resultNotes", () => {
     expect(n.short).toEqual(["map: worse → better here", "⚠ terrain only, OSM down", "⚠ buildings ignored"]);
     expect(n.full).toHaveLength(3);
   });
+
+  it("warns when terrain tiles failed to load", () => {
+    const n = resultNotes({ ...base, terrainMissing: true });
+    expect(n.short).toContain("⚠ some terrain missing");
+    expect(n.full.at(-1)).toMatch(/marked unknown/);
+    expect(n.warn).toBe(true);
+  });
 });

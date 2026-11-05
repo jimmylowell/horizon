@@ -46,6 +46,7 @@ export function skyOpenness(
   for (let i = 0; i < ringAngles.length; i++) {
     const w = 0.65 + 0.35 * Math.cos((ringAzimuthsDeg[i] - eventAzimuthDeg) * DEG);
     wSum += w;
+    // NaN (no terrain data that way) fails this test: unknown is not open.
     if (ringAngles[i] < OPEN_SKY_MAX_DEG) {
       wOpen += w;
       openCount++;

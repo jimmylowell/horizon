@@ -5,6 +5,7 @@
 
 import { DEG, EARTH_RADIUS_M, EFFECTIVE_RADIUS_M } from "../geo";
 
+/** Ground elevation in metres; NaN where there is no terrain data. */
 export type ElevationSampler = (lat: number, lon: number) => number;
 
 /**
@@ -41,6 +42,12 @@ export interface HorizonResult {
   /** The point forming the horizon (the skyline the body rises/sets behind). */
   horizonLat: number;
   horizonLon: number;
+  /**
+   * The ray crossed ground with no terrain data (a tile that failed to load),
+   * or the observer stands on it. The angle is then a lower bound: whatever
+   * is in the gap could only block more, so the spot is unknown, not clear.
+   */
+  noData: boolean;
 }
 
 /**
@@ -59,6 +66,17 @@ export function marchHorizon(
   const eye = opts.eyeHeightM ?? 2;
 
   const ground = sample(lat0, lon0);
+  if (!Number.isFinite(ground)) {
+    // Nothing is known about where you stand, so nothing about the view.
+    return {
+      maxAngleDeg: NaN,
+      horizonDistM: maxDist,
+      groundM: NaN,
+      horizonLat: lat0,
+      horizonLon: lon0,
+      noData: true,
+    };
+  }
   const h0 = ground + eye;
 
   const az = azimuthDeg * DEG;
@@ -72,6 +90,7 @@ export function marchHorizon(
   let distAtMax = maxDist;
   let latAtMax = latR;
   let lonAtMax = lonR;
+  let noData = false;
 
   // A grid point can land *on* a footprint (you'd stand beside it, not on the
   // roof): ignore obstacles until the ray exits that contiguous built run.
@@ -86,6 +105,10 @@ export function marchHorizon(
     latR += (step * cosAz) / EARTH_RADIUS_M;
     lonR += (step * sinAz) / (EARTH_RADIUS_M * Math.cos(latR));
     let h = sample(latR / DEG, lonR / DEG);
+    if (!Number.isFinite(h)) {
+      noData = true; // a gap in the terrain, never a 2 km-deep hole
+      continue;
+    }
     if (nearObs) {
       const oh = obs.sample(latR / DEG, lonR / DEG);
       if (oh > 0) {
@@ -109,6 +132,7 @@ export function marchHorizon(
     groundM: ground,
     horizonLat: latAtMax / DEG,
     horizonLon: lonAtMax / DEG,
+    noData,
   };
 }
 
@@ -121,6 +145,8 @@ export function ringAzimuths(eventAzimuthDeg: number, count: number): number[] {
  * Full-circle horizon profile: one obstruction angle per ring azimuth, in
  * `ringAzimuths` order. Openness is about nearby walls, not distant ranges,
  * so callers pass a much shorter maxDistM than the event-fan march.
+ * A direction whose ray crossed missing terrain is NaN: unknown, which
+ * `skyOpenness` never counts as open.
  */
 export function horizonRing(
   sample: ElevationSampler,
@@ -131,14 +157,17 @@ export function horizonRing(
   opts: MarchOptions = {}
 ): number[] {
   return ringAzimuths(eventAzimuthDeg, count).map(
-    (az) => marchHorizon(sample, lat, lon, az, opts).maxAngleDeg
+    (az) => {
+      const r = marchHorizon(sample, lat, lon, az, opts);
+      return r.noData ? NaN : r.maxAngleDeg;
+    }
   );
 }
 
 /**
  * Horizon over a small azimuth fan (event direction ± spread).
  * Returns the mean obstruction angle across rays plus the centre ray's
- * horizon distance and ground elevation.
+ * horizon distance and ground elevation; `noData` if any ray crossed a gap.
  */
 export function horizonFan(
   sample: ElevationSampler,
@@ -151,9 +180,11 @@ export function horizonFan(
   const offsets = spreadDeg > 0 ? [-spreadDeg, 0, spreadDeg] : [0];
   let sumAngle = 0;
   let centre: HorizonResult | null = null;
+  let noData = false;
   for (const off of offsets) {
     const r = marchHorizon(sample, lat, lon, azimuthDeg + off, opts);
     sumAngle += r.maxAngleDeg;
+    noData ||= r.noData;
     if (off === 0) centre = r;
   }
   return {
@@ -162,5 +193,6 @@ export function horizonFan(
     groundM: centre!.groundM,
     horizonLat: centre!.horizonLat,
     horizonLon: centre!.horizonLon,
+    noData,
   };
 }

@@ -70,6 +70,8 @@ export interface CandidateResult {
   /** Point on the skyline the event happens behind (centre ray). */
   horizonLat: number;
   horizonLon: number;
+  /** The event rays crossed missing terrain (or the spot sits on it). */
+  noData: boolean;
 }
 
 export interface RingResult {
@@ -205,6 +207,7 @@ async function handleSearch(req: SearchRequest): Promise<void> {
       groundM: r.groundM,
       horizonLat: r.horizonLat,
       horizonLon: r.horizonLon,
+      noData: r.noData,
     });
     if (i % 50 === 0) {
       post({
@@ -245,6 +248,7 @@ async function handleProbe(req: ProbeRequest): Promise<void> {
       groundM: r.groundM,
       horizonLat: r.horizonLat,
       horizonLon: r.horizonLon,
+      noData: r.noData,
     },
   });
 }

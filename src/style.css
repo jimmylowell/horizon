@@ -260,6 +260,8 @@ body {
 .g2 { color: var(--text-2); }
 .g1 { color: var(--grade1); }
 .g0 { color: var(--grade0); }
+/* Unknown: terrain toward the event did not load. Muted and italic, never the "open" blue. */
+.gu { color: var(--text-2); font-style: italic; }
 @media (prefers-color-scheme: dark) {
   .g4 { color: #86b6ef; }
   .g0 { color: #e66767; }

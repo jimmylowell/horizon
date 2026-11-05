@@ -24,6 +24,7 @@ import { nameSkylinePoints, type SkylineFeature } from "./search/horizonFeature"
 import { landcoverAt } from "./search/landcover";
 import { verdict, VERDICT_MAX_CARDS } from "./search/verdict";
 import { resultNotes } from "./render/notes";
+import { noDataFlag, spotReading } from "./search/reading";
 import { fetchOsmCandidates } from "./search/osm";
 import type { TravelMode } from "./search/pois";
 import { buildRoadIndex, roadBandsM } from "./search/roads";
@@ -462,20 +463,24 @@ function formatAngle(deg: number): string {
  * ridge. "Blocked by terrain" at 3° is nonsense for a moonrise — the show is
  * the moon clearing the ridge, 20 minutes late.
  */
-function effectLabel(kind: EventKind, eff: ObstructionEffect): { label: string; grade: number } {
-  const rising = kind.endsWith("rise");
-  if (!eff.time) return { label: `Open horizon — full ${rising ? "rise" : "set"}`, grade: 4 };
-  const when = timeFmt.format(eff.time);
-  const lost = `${rising ? "+" : "−"}${eff.lostMin} min`;
-  return {
-    label: rising ? `Clears the ridge ~${when} (${lost})` : `Behind the ridge ~${when} (${lost})`,
-    grade: lostGrade(eff.lostMin),
-  };
+function effectLabel(
+  kind: EventKind,
+  eff: ObstructionEffect,
+  noData = false
+): { label: string; grade: number | "u" } {
+  // Missing terrain toward the event is "unknown", never "open" (salida-test.md, finding 7).
+  return spotReading({
+    kind,
+    lostMin: eff.lostMin,
+    whenText: eff.time ? timeFmt.format(eff.time) : null,
+    noData,
+  });
 }
 
 /** Minutes a spot gains over the origin, when the origin's own readout is known. */
-function gainVsHere(eff: ObstructionEffect): { text: string; cls: string; min: number } | null {
-  if (!here || here.kind !== state.kind) return null;
+function gainVsHere(eff: ObstructionEffect, noData = false): { text: string; cls: string; min: number } | null {
+  // A gain against missing terrain, on either side, would be made up.
+  if (!here || here.kind !== state.kind || noData || here.noData) return null;
   const min = here.effect.lostMin - eff.lostMin;
   if (min > 0) return { text: `+${min} min vs here`, cls: "good", min };
   if (min < 0) return { text: `${min} min vs here`, cls: "bad", min };
@@ -708,6 +713,11 @@ async function doProbeHere(): Promise<void> {
     const reply = await askWorker<ProbeReply>(req, () => {});
     if (hereRequest !== id) return; // superseded by a newer pin/event
     const r = reply.result;
+    if (!Number.isFinite(r.groundM)) {
+      // The tile under the pin did not load: nothing is known here.
+      renderHere("Terrain didn't load here — try again in a moment.");
+      return;
+    }
     here = {
       ...r,
       kind: ev.kind,
@@ -771,13 +781,23 @@ function renderHere(note?: string): void {
   } else {
     main = `Open horizon — full ${rising ? "rise" : "set"} at ${t}`;
   }
+  if (here.noData) {
+    // Part of the line toward the event did not load: a minimum, not a reading.
+    main = spotReading({
+      kind: state.kind,
+      lostMin: effect.lostMin,
+      whenText: effect.time ? timeFmt.format(effect.time) : null,
+      noData: true,
+    }).label;
+  }
   const ridge = hitTerrain(here)
     ? ` · ridge ${formatAngle(here.obstructionDeg)}, ${(here.horizonDistM / 1000).toFixed(0)} km away`
     : " · no terrain on the horizon";
   const behind = here.skyline
     ? ` · behind ${here.skyline.name}${here.skyline.eleM !== undefined ? ` (${Math.round(here.skyline.eleM).toLocaleString()} m)` : ""}`
     : "";
-  hereEl.innerHTML = `<div class="here-main g${lostGrade(effect.lostMin)}"></div><div class="here-sub"></div>`;
+  const grade = here.noData ? "u" : lostGrade(effect.lostMin);
+  hereEl.innerHTML = `<div class="here-main g${grade}"></div><div class="here-sub"></div>`;
   hereEl.querySelector(".here-main")!.textContent = main;
   hereEl.querySelector(".here-sub")!.textContent = `${facts}${ridge}${behind}${golden}`;
 }
@@ -946,13 +966,20 @@ async function presentResults(
     sky?: SkyOpenness;
     skyAngles?: number[];
   };
+  // Missing terrain (a tile that failed to load) is unknown, not clear:
+  // a spot standing on a gap is dropped, one looking across a gap is
+  // flagged and ranked after every spot with full data (salida-test.md, finding 7).
+  const terrainMissing = results.some((r) => r.noData);
   const scored: Scored[] = candidates
     .map((c) => ({ candidate: c, result: byId.get(c.id) }))
-    .filter((x): x is { candidate: Candidate; result: CandidateResult } => !!x.result)
+    .filter(
+      (x): x is { candidate: Candidate; result: CandidateResult } =>
+        !!x.result && Number.isFinite(x.result.groundM)
+    )
     .map((x) => ({
       ...x,
       score: score({ obstructionDeg: x.result.obstructionDeg, horizonDistM: x.result.horizonDistM }),
-      flags: [],
+      flags: x.result.noData ? [noDataFlag(ev.kind)] : [],
     }));
 
   const gridScored = scored.filter((x) => x.candidate.source === "grid");
@@ -961,7 +988,8 @@ async function presentResults(
 
   // Heatmap shows raw terrain quality over the whole ring (grid), stretched
   // to the local score distribution.
-  const heatPoints: ScorePoint[] = gridScored.map((x) => ({
+  // Cells looking across missing terrain are left off: a colour there would be a guess.
+  const heatPoints: ScorePoint[] = gridScored.filter((x) => !x.result.noData).map((x) => ({
     lat: x.candidate.lat,
     lon: x.candidate.lon,
     score: x.score,
@@ -1020,7 +1048,8 @@ async function presentResults(
       : x.candidate.source === "grid"
         ? -0.25
         : 0.5 * x.candidate.weight;
-  const byRank = (a: Scored, b: Scored) => b.score + bonus(b) - (a.score + bonus(a));
+  const byRank = (a: Scored, b: Scored) =>
+    Number(a.result.noData) - Number(b.result.noData) || b.score + bonus(b) - (a.score + bonus(a));
   const finalists = [...terrainPool, ...poiScored]
     .filter((x) => !excluded.has(x))
     .sort(byRank)
@@ -1075,13 +1104,16 @@ async function presentResults(
 
   // Lead with the verdict: when nothing in the ring is worth the trip, one
   // line says so and only a few cards follow (docs/salida-test.md, item 3).
+  // Only spots with full terrain data count toward the verdict; a guess
+  // either way would be worse than no verdict.
+  const known = ranked.filter((s) => !s.result.noData);
   const answer =
-    here && here.kind === ev.kind && ranked.length
+    here && here.kind === ev.kind && !here.noData && known.length
       ? verdict({
           kind: ev.kind,
           radiusKm: state.radiusKm,
           hereLostMin: here.effect.lostMin,
-          bestGainMin: Math.max(...ranked.map((s) => here!.effect.lostMin - s.effect.lostMin)),
+          bestGainMin: Math.max(...known.map((s) => here!.effect.lostMin - s.effect.lostMin)),
         })
       : null;
   const spots = answer ? ranked.slice(0, VERDICT_MAX_CARDS) : ranked;
@@ -1124,6 +1156,7 @@ async function presentResults(
     osm,
     roadsIn,
     buildingsMissing: buildingCount === null,
+    terrainMissing,
   });
   if (notes.short.length) {
     const fine = document.createElement("details");
@@ -1241,8 +1274,8 @@ function spotCard(s: RankedSpot): HTMLElement {
   const isPoi = !isRoad && c.source !== "grid";
   const name = c.name ?? (isRoad ? "Roadside" : isPoi ? c.label! : "Open terrain");
   const chip = isPoi || isRoad ? c.label! : "access unverified";
-  const v = effectLabel(kind, s.effect);
-  const gain = gainVsHere(s.effect);
+  const v = effectLabel(kind, s.effect, s.result.noData);
+  const gain = gainVsHere(s.effect, s.result.noData);
 
   const el = document.createElement("article");
   el.className = "spot-card";

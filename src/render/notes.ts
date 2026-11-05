@@ -18,6 +18,8 @@ export interface NotesInput {
   roadsIn: boolean;
   /** Building footprints were wanted (walk/bike) and did not arrive. */
   buildingsMissing: boolean;
+  /** Some terrain tiles failed to load, so some spots are unknown. */
+  terrainMissing?: boolean;
 }
 
 export interface NotesLine {
@@ -60,6 +62,14 @@ export function resultNotes(n: NotesInput): NotesLine {
     short.push("⚠ buildings ignored");
     full.push(
       "Building data isn't available right now, so scores ignore buildings and streets look more open than they are."
+    );
+    warn = true;
+  }
+
+  if (n.terrainMissing) {
+    short.push("⚠ some terrain missing");
+    full.push(
+      "Some elevation tiles didn't load, so spots whose view crosses them are marked unknown and listed after the rest. Try again with a better signal."
     );
     warn = true;
   }
