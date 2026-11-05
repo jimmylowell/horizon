@@ -10,6 +10,7 @@ import { DEG, destination, type LatLon } from "../geo";
 import { horizonFan, horizonRing, type ObstacleField } from "../elevation/horizon";
 import {
   metersPerPixel,
+  TILE_SIZE,
   TileCache,
   tileKeyString,
   tilesForBBox,
@@ -118,10 +119,17 @@ function corridorTiles(req: {
 }): TileKey[] {
   const { origin, radiusM, azimuthDeg, spreadDeg, maxDistM, zoom } = req;
   const seen = new Map<string, TileKey>();
-  // A zero-radius probe still needs the tile under the point plus a margin.
-  const pad = Math.max(radiusM * 1.15, 500);
-  const sweepStep = Math.min(15_000, maxDistM / 8);
-  for (let d = 0; d <= maxDistM; d += sweepStep) {
+  // Sweep points no farther apart than half a tile, each padded by at least
+  // half the spacing, so every point of every ray lies inside some padded
+  // box. With a fixed 15 km sweep and a 500 m pad the probe used to skip the
+  // tiles between sweep points, and they read as 0 m; now a skipped tile
+  // would read as missing, so the cover has to be complete.
+  const tileM = metersPerPixel(origin.lat, zoom) * TILE_SIZE;
+  const sweepStep = Math.min(15_000, maxDistM / 8, tileM / 2);
+  const pad = Math.max(radiusM * 1.15, sweepStep * 0.6, 500);
+  // The march's last step can overshoot maxDistM by ~1%.
+  const reach = maxDistM * 1.02 + sweepStep;
+  for (let d = 0; d <= reach; d += sweepStep) {
     for (const az of [azimuthDeg - spreadDeg, azimuthDeg, azimuthDeg + spreadDeg]) {
       const c = d === 0 ? origin : destination(origin, d, az);
       const dLat = pad / 111_320;

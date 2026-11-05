@@ -44,6 +44,16 @@ export function resultNotes(n: NotesInput): NotesLine {
   }
   let warn = false;
 
+  // First of the warnings: it changes the numbers on the cards, and the
+  // folded line is cut off at the end on a phone.
+  if (n.terrainMissing) {
+    short.push("⚠ terrain gaps");
+    full.push(
+      "Some elevation tiles didn't load, so spots whose view crosses them are marked unknown and listed after the rest. Try again with a better signal."
+    );
+    warn = true;
+  }
+
   if (n.osm === "pending") {
     short.push("adding roads…");
     full.push("Best by terrain so far; roads and named places from OpenStreetMap are still on their way.");
@@ -62,14 +72,6 @@ export function resultNotes(n: NotesInput): NotesLine {
     short.push("⚠ buildings ignored");
     full.push(
       "Building data isn't available right now, so scores ignore buildings and streets look more open than they are."
-    );
-    warn = true;
-  }
-
-  if (n.terrainMissing) {
-    short.push("⚠ some terrain missing");
-    full.push(
-      "Some elevation tiles didn't load, so spots whose view crosses them are marked unknown and listed after the rest. Try again with a better signal."
     );
     warn = true;
   }

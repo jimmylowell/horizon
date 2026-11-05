@@ -22,7 +22,7 @@ import { clearSpotMarkers, renderSpotMarkers } from "./render/spots";
 import { gridCandidates, gridSpacingM, type Candidate } from "./search/grid";
 import { nameSkylinePoints, type SkylineFeature } from "./search/horizonFeature";
 import { landcoverAt } from "./search/landcover";
-import { verdict, VERDICT_MAX_CARDS } from "./search/verdict";
+import { verdict, VERDICT_MARGIN_MIN, VERDICT_MAX_CARDS } from "./search/verdict";
 import { resultNotes } from "./render/notes";
 import { noDataFlag, spotReading } from "./search/reading";
 import { fetchOsmCandidates } from "./search/osm";
@@ -1104,11 +1104,15 @@ async function presentResults(
 
   // Lead with the verdict: when nothing in the ring is worth the trip, one
   // line says so and only a few cards follow (docs/salida-test.md, item 3).
-  // Only spots with full terrain data count toward the verdict; a guess
-  // either way would be worse than no verdict.
+  // Only spots with full terrain data count toward the verdict. A spot
+  // across missing terrain loses at least what it shows, so if even that
+  // minimum could beat the cut, "nowhere is better" would be a guess: no verdict,
+  // and every card shows.
   const known = ranked.filter((s) => !s.result.noData);
+  const unknownMightWin =
+    !!here && ranked.some((s) => s.result.noData && here!.effect.lostMin - s.effect.lostMin > VERDICT_MARGIN_MIN);
   const answer =
-    here && here.kind === ev.kind && !here.noData && known.length
+    here && here.kind === ev.kind && !here.noData && known.length && !unknownMightWin
       ? verdict({
           kind: ev.kind,
           radiusKm: state.radiusKm,

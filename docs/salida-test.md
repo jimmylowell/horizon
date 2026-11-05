@@ -54,7 +54,11 @@ permalink, Denver drive 25 km permalink, Denver via the locate button.
 5. **The legend contradicts itself in Denver.** It says "Terrain blocks the
    view everywhere near you" while every listed spot has "360° open sky"; the
    Front Range 75 km away takes 1° off the sunset everywhere. True, but the
-   wording reads like failure.
+   wording reads like failure. *(2026-11-05: settled by the item 4 fold. The
+   sentence now says "Terrain blocks some of the view everywhere near you" and
+   sits behind the tap; Denver drive 25 km at 390 px reads verdict "Nowhere
+   within 25 km sees this sunset more than 6 minutes longer; go higher" over
+   cards at −10 to −12 min, no contradiction left. No change made.)*
 6. **Scoring is slow on a phone-class CPU.** Salida walk 2 km: 37 s on
    "Scoring horizons…" for 491 points (SwiftShader, so slower than a real
    phone, but the order of magnitude is worth measuring on one).
@@ -94,7 +98,21 @@ permalink, Denver drive 25 km permalink, Denver via the locate button.
    not needed for that and is not built)* topbar on two rows or an event
    dropdown; bottom sheet collapsed to the verdict and first card, drag up
    for the rest; warnings folded into one small line.
-5. **Missing tile = no data, not 0 m:** mark the ray as unknown and say so.
+5. **Missing tile = no data, not 0 m:** *(done 2026-11-05: a tile that fails
+   to load samples as NaN; a ray across it is `noData`, its angle a minimum;
+   a sky-ring direction across it never counts as open; a spot standing on one
+   is dropped. Cards with a gap say "or earlier (−6 min or more)" in grey
+   italics with a warning line, rank after every spot with full data, and
+   show no "vs here" gain; the heatmap leaves those cells out; the folded line
+   says "⚠ terrain gaps"; From here says "or more" too, and a pin on a failed
+   tile says terrain didn't load. No verdict while an unknown spot's minimum
+   could still beat the 7-min cut. Salida drive 25 km at 390 px with tile
+   10/209/393 refused: four known cards, then four unknown; before the fix the
+   unknown ones, at −6 to −18 min, would have led the list. Fixing it showed a
+   second bug: the probe's tile prefetch swept every 15 km with a 500 m pad
+   and skipped the tiles in between, which read as 0 m, so From here in
+   Denver under-read the Front Range; the sweep is now at most half a tile)*
+   mark the ray as unknown and say so.
 6. **Cite or replace the refraction coefficient** (`src/geo.ts`).
 7. Write the hash after every search; fix the null style expression.
 8. Measure scoring time on a real phone before optimising it.

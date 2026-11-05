@@ -42,7 +42,7 @@ describe("resultNotes", () => {
 
   it("warns when terrain tiles failed to load", () => {
     const n = resultNotes({ ...base, terrainMissing: true });
-    expect(n.short).toContain("⚠ some terrain missing");
+    expect(n.short).toEqual(["map: worse → better here", "⚠ terrain gaps"]);
     expect(n.full.at(-1)).toMatch(/marked unknown/);
     expect(n.warn).toBe(true);
   });
