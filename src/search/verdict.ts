@@ -7,8 +7,12 @@
  * than VERDICT_MARGIN_MIN over here, say so in one line and show fewer cards.
  */
 
-/** Gains at or below this many minutes are not worth the drive. */
-export const VERDICT_MARGIN_MIN = 5;
+/**
+ * Gains at or below this many minutes are not worth the trip. The Salida test
+ * (2026-11-04) found the best valley spots at +2 to +7 min over the town pin
+ * and read that as "nothing nearby is much better", so 7 is the cut.
+ */
+export const VERDICT_MARGIN_MIN = 7;
 /** Cards shown under a verdict line. */
 export const VERDICT_MAX_CARDS = 3;
 /** Here loses at most this much: already about as good as it gets. */

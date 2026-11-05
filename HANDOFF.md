@@ -11,10 +11,20 @@ spots at 4.5 s with Overpass refused, 4.0 s with it hanging (done 13.3 s),
 4.8 s with it answering (a made-up test road set, since no mirror answered
 from this host that night). `npm test` (27) and `npm run build` pass.
 
-**Next:** fix list item 3, lead with the verdict ("nothing within 25 km beats
-here by more than 7 minutes; go higher"), then item 4, the phone layout.
+Item 3 is done too: when no spot gains more than 7 min over the pin, one line
+leads the list ("Nowhere within 25 km sees this sunset more than 7 minutes
+longer; go higher.", or "stay put" when the pin is already open) and only three
+cards follow. Salida drive 25 km at 390 px, Overpass hanging: the line sits
+above the first card. `npm test` (32) and `npm run build` pass.
 
-**Decided:** mirrors are the three keyless worldwide instances on the OSM wiki's
+**Next:** fix list item 4, the phone layout (topbar chips cut off; legend and
+warning push the first card below the fold, see the verdict screenshots).
+
+**Decided:** the verdict cut is 7 min, not the doc's "~5": the Salida test
+called +2 to +7 "nothing nearby is much better", and Jimmy's own example line
+names 7.
+
+ mirrors are the three keyless worldwide instances on the OSM wiki's
 *Overpass API* page (overpass-api.de, maps.mail.ru, overpass.private.coffee);
 overpass.kumi.systems was dropped because the wiki lists it as private.coffee's
 old name. A mirror that answers 429, 406 or 5xx sits out 30 s, as the wiki asks.

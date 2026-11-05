@@ -80,7 +80,9 @@ permalink, Denver drive 25 km permalink, Denver via the locate button.
 2. **Never block the screen on Overpass:** score terrain first and show the
    heatmap and best-by-terrain spots as soon as tiles are in; add roads and
    places when (if) they arrive, and re-rank.
-3. **Lead with the verdict:** when nothing beats the pin by more than ~5
+3. **Lead with the verdict:** *(done 2026-11-04, `src/search/verdict.ts`;
+   the cut is 7 min, since this test read +2 to +7 as "nothing much better")*
+   when nothing beats the pin by more than ~5
    minutes, say so in one line ("Nowhere within 25 km sees this sunset
    more than 7 minutes longer; go higher") instead of eight near-identical cards.
 4. **Phone layout:** topbar on two rows or an event dropdown; bottom sheet

@@ -3,9 +3,9 @@ import { verdict } from "./verdict";
 
 describe("verdict", () => {
   it("says go higher when a blocked valley gains little anywhere (Salida)", () => {
-    expect(verdict({ kind: "sunset", radiusKm: 25, hereLostMin: 25, bestGainMin: 4.6 })).toEqual({
+    expect(verdict({ kind: "sunset", radiusKm: 25, hereLostMin: 25, bestGainMin: 7 })).toEqual({
       kind: "higher",
-      text: "Nowhere within 25 km sees this sunset more than 5 minutes longer; go higher.",
+      text: "Nowhere within 25 km sees this sunset more than 7 minutes longer; go higher.",
     });
   });
 
@@ -26,6 +26,6 @@ describe("verdict", () => {
   });
 
   it("stays quiet when a spot is worth the trip", () => {
-    expect(verdict({ kind: "sunset", radiusKm: 25, hereLostMin: 25, bestGainMin: 6 })).toBeNull();
+    expect(verdict({ kind: "sunset", radiusKm: 25, hereLostMin: 25, bestGainMin: 8 })).toBeNull();
   });
 });
