@@ -17,13 +17,19 @@ import {
 } from "./astro";
 import { destination, flatDistanceM, type LatLon } from "./geo";
 import { ringAzimuths } from "./elevation/horizon";
+import { repairBasemapStyle } from "./render/basemap";
 import { clearHeatmap, renderHeatmap, type ScorePoint } from "./render/heatmap";
 import { clearSpotMarkers, renderSpotMarkers } from "./render/spots";
 import { gridCandidates, gridSpacingM, type Candidate } from "./search/grid";
 import { nameSkylinePoints, type SkylineFeature } from "./search/horizonFeature";
 import { landcoverAt } from "./search/landcover";
-import { fetchPois, type TravelMode } from "./search/pois";
-import { buildRoadIndex, fetchRoadCandidates, roadBandsM } from "./search/roads";
+import { verdict, VERDICT_MARGIN_MIN, VERDICT_MAX_CARDS } from "./search/verdict";
+import { resultNotes } from "./render/notes";
+import { noDataFlag, spotReading } from "./search/reading";
+import { AWAY_SPREAD_DEG, awayAzimuth, awayGainVsHere, awayReading, canFaceAway } from "./search/away";
+import { fetchOsmCandidates } from "./search/osm";
+import type { TravelMode } from "./search/pois";
+import { buildRoadIndex, roadBandsM } from "./search/roads";
 import {
   OPEN_SKY_MAX_DEG,
   lostGrade,
@@ -52,6 +58,8 @@ interface State {
   events: Partial<Record<EventKind, SkyEvent>>;
   golden: Partial<Record<EventKind, GoldenHourSpan>>;
   searching: boolean;
+  /** Which sky the search is for: toward the sun, or the sky opposite it (sun events only). */
+  facing: "sun" | "away";
 }
 
 const MODE_DEFAULT_KM: Record<TravelMode, number> = { walk: 2, bike: 8, drive: 25 };
@@ -65,7 +73,21 @@ const state: State = {
   events: {},
   golden: {},
   searching: false,
+  facing: "sun",
 };
+
+/** True when the search looks at the sky opposite the sun (src/search/away.ts). */
+function facingAway(): boolean {
+  return state.facing === "away" && canFaceAway(state.kind);
+}
+/** Bearing the rays are marched along: the event, or straight opposite it. */
+function lookAzimuth(ev: SkyEvent): number {
+  return facingAway() ? awayAzimuth(ev.azimuthDeg) : ev.azimuthDeg;
+}
+/** Half-width of the fan: ±8° on the event line, ±30° over the sky opposite. */
+function lookSpread(): number {
+  return facingAway() ? AWAY_SPREAD_DEG : 8;
+}
 
 function todayStr(): string {
   const d = new Date();
@@ -79,7 +101,7 @@ function baseTime(): Date {
   return new Date(y, m - 1, d, 0, 0, 0);
 }
 
-// Permalink: #lat,lon,kind,mode,radius[,date]
+// Permalink: #lat,lon,kind,mode,radius[,date][,away]
 /** True when the page opened on a shared/bookmarked permalink (auto-searches). */
 let openedFromHash = false;
 function readHash(): void {
@@ -96,6 +118,7 @@ function readHash(): void {
     const r = parseFloat(m[4]);
     if (Number.isFinite(r)) state.radiusKm = Math.min(40, Math.max(1, r));
     if (m[5] && /^\d{4}-\d{2}-\d{2}$/.test(m[5])) state.date = m[5];
+    if (m.slice(5).includes("away")) state.facing = "away";
   }
 }
 function writeHash(): void {
@@ -103,7 +126,7 @@ function writeHash(): void {
   history.replaceState(
     null,
     "",
-    `#${state.loc.lat.toFixed(5)},${state.loc.lon.toFixed(5)},${state.kind},${state.mode},${state.radiusKm}${date}`
+    `#${state.loc.lat.toFixed(5)},${state.loc.lon.toFixed(5)},${state.kind},${state.mode},${state.radiusKm}${date}${facingAway() ? ",away" : ""}`
   );
 }
 
@@ -113,11 +136,13 @@ readHash();
 
 const map = new MapLibreMap({
   container: "map",
-  style: "https://tiles.openfreemap.org/styles/liberty",
   center: [state.loc.lon, state.loc.lat],
   zoom: 10,
   attributionControl: { compact: true },
 });
+// Set after construction so the fetched style can be repaired before it is
+// committed (render/basemap.ts: null-safe number filters).
+map.setStyle("https://tiles.openfreemap.org/styles/liberty", { transformStyle: repairBasemapStyle });
 let mapReady = false;
 map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
 const geolocate = new GeolocateControl({
@@ -183,7 +208,7 @@ map.on("click", (e) => {
       if (best) {
         const ev = lastSearch.ev;
         const eff = obstructionEffect(ev.kind, best.lat, best.lon, ev.time, best.obstructionDeg);
-        const v = effectLabel(ev.kind, eff);
+        const v = facingAway() ? awayReading(best.obstructionDeg, false) : effectLabel(ev.kind, eff);
         const gain = gainVsHere(eff);
         inspectPopup?.remove();
         inspectPopup = new Popup({ closeButton: false })
@@ -276,9 +301,12 @@ function drawAzimuth(): void {
     if (!ev) continue;
     lines.push(azimuthLine(ev.azimuthDeg, kind, false));
     if (kind === state.kind) {
-      // Search wedge: matches the ±spreadDeg the scorer uses.
-      lines.push(azimuthLine(ev.azimuthDeg - 8, kind, true));
-      lines.push(azimuthLine(ev.azimuthDeg + 8, kind, true));
+      // Search wedge: matches the ±spreadDeg the scorer uses, toward the
+      // event or, facing away, over the sky opposite it.
+      const az = lookAzimuth(ev);
+      if (facingAway()) lines.push(azimuthLine(az, kind, false));
+      lines.push(azimuthLine(az - lookSpread(), kind, true));
+      lines.push(azimuthLine(az + lookSpread(), kind, true));
     }
     const gh = state.golden[kind];
     if (gh) sectors.push(azimuthSector(gh.startAzDeg, gh.endAzDeg, kind));
@@ -459,20 +487,25 @@ function formatAngle(deg: number): string {
  * ridge. "Blocked by terrain" at 3° is nonsense for a moonrise — the show is
  * the moon clearing the ridge, 20 minutes late.
  */
-function effectLabel(kind: EventKind, eff: ObstructionEffect): { label: string; grade: number } {
-  const rising = kind.endsWith("rise");
-  if (!eff.time) return { label: `Open horizon — full ${rising ? "rise" : "set"}`, grade: 4 };
-  const when = timeFmt.format(eff.time);
-  const lost = `${rising ? "+" : "−"}${eff.lostMin} min`;
-  return {
-    label: rising ? `Clears the ridge ~${when} (${lost})` : `Behind the ridge ~${when} (${lost})`,
-    grade: lostGrade(eff.lostMin),
-  };
+function effectLabel(
+  kind: EventKind,
+  eff: ObstructionEffect,
+  noData = false
+): { label: string; grade: number | "u" } {
+  // Missing terrain toward the event is "unknown", never "open" (salida-test.md, finding 7).
+  return spotReading({
+    kind,
+    lostMin: eff.lostMin,
+    whenText: eff.time ? timeFmt.format(eff.time) : null,
+    noData,
+  });
 }
 
 /** Minutes a spot gains over the origin, when the origin's own readout is known. */
-function gainVsHere(eff: ObstructionEffect): { text: string; cls: string; min: number } | null {
-  if (!here || here.kind !== state.kind) return null;
+function gainVsHere(eff: ObstructionEffect, noData = false): { text: string; cls: string; min: number } | null {
+  // A gain against missing terrain, on either side, would be made up.
+  if (!here || here.kind !== state.kind || noData || here.noData) return null;
+  if (facingAway()) return null; // compared in degrees instead (awayGainVsHere)
   const min = here.effect.lostMin - eff.lostMin;
   if (min > 0) return { text: `+${min} min vs here`, cls: "good", min };
   if (min < 0) return { text: `${min} min vs here`, cls: "bad", min };
@@ -487,21 +520,47 @@ function renderEventPicker(): void {
     setPressed(btn, kind === state.kind);
     const extra =
       ev?.moonIllumination !== undefined ? ` · ${Math.round(ev.moonIllumination * 100)}%` : "";
+    // The weekday only when the event falls on another day than the one being
+    // planned (a moonrise often does), so four chips fit a phone's width.
+    const sameDay = ev && ev.time.toDateString() === baseTime().toDateString();
+    const when = ev ? (sameDay ? timeFmt : dayTimeFmt).format(ev.time) : "";
     btn.innerHTML =
       `<span class="dot" style="background:${EVENT_COLORS[kind]}"></span>${eventLabel(kind)}` +
-      `<span class="t">${ev ? dayTimeFmt.format(ev.time) + extra : "—"}</span>`;
+      `<span class="t">${ev ? when + extra : "—"}</span>`;
+    if (ev) btn.title = dayTimeFmt.format(ev.time) + extra;
     btn.disabled = !ev;
     btn.addEventListener("click", () => {
       if (kind === state.kind) return;
       state.kind = kind;
       clearResults(); // results were scored along the old event's azimuth
       renderEventPicker();
+      renderFacing();
       drawAzimuth();
       void probeHere();
       writeHash();
     });
     eventsNav.appendChild(btn);
   }
+}
+
+/** Sun / Away toggle: shown for sun events only; the choice is kept across event changes. */
+const facingEl = document.getElementById("facing")!;
+const facingBtns = [...facingEl.querySelectorAll<HTMLButtonElement>("button")];
+function renderFacing(): void {
+  facingEl.hidden = !canFaceAway(state.kind);
+  for (const b of facingBtns) setPressed(b, b.dataset.facing === (facingAway() ? "away" : "sun"));
+}
+for (const b of facingBtns) {
+  b.addEventListener("click", () => {
+    const f = b.dataset.facing === "away" ? "away" : "sun";
+    if (f === state.facing) return;
+    state.facing = f;
+    clearResults(); // results were scored along the other direction
+    renderFacing();
+    drawAzimuth();
+    void probeHere();
+    writeHash();
+  });
 }
 
 function refreshEvents(): void {
@@ -518,12 +577,17 @@ function refreshEvents(): void {
     if (firstAvailable) state.kind = firstAvailable;
   }
   renderEventPicker();
+  renderFacing();
   drawAzimuth();
   void probeHere();
 }
 
 /** Blank slate: drop everything the last search drew and listed. */
+/** Bumped by every search and every clear, so a late OSM answer can tell it is stale. */
+let searchSeq = 0;
+
 function clearResults(): void {
+  searchSeq++;
   lastSearch = null;
   inspectPopup?.remove();
   inspectPopup = null;
@@ -687,8 +751,8 @@ async function doProbeHere(): Promise<void> {
       type: "probe",
       requestId: id,
       point: loc,
-      azimuthDeg: ev.azimuthDeg,
-      spreadDeg: 8,
+      azimuthDeg: lookAzimuth(ev),
+      spreadDeg: lookSpread(),
       maxDistM: RAY_REACH_M,
       zoom: PROBE_ZOOM,
       eyeHeightM: 2,
@@ -696,6 +760,11 @@ async function doProbeHere(): Promise<void> {
     const reply = await askWorker<ProbeReply>(req, () => {});
     if (hereRequest !== id) return; // superseded by a newer pin/event
     const r = reply.result;
+    if (!Number.isFinite(r.groundM)) {
+      // The tile under the pin did not load: nothing is known here.
+      renderHere("Terrain didn't load here — try again in a moment.");
+      return;
+    }
     here = {
       ...r,
       kind: ev.kind,
@@ -703,18 +772,28 @@ async function doProbeHere(): Promise<void> {
       effect: obstructionEffect(ev.kind, loc.lat, loc.lon, ev.time, r.obstructionDeg),
     };
     renderHere();
-    if (!hitTerrain(r)) return;
+    // The ridge's name is decoration from Overpass: name it in the
+    // background, so a search waiting on this readout never waits on OSM.
+    void nameHereSkyline(id, loc, r);
+  } catch (err) {
+    console.error(err);
+    if (hereRequest === id) renderHere("Terrain data unavailable right now.");
+  }
+}
+
+async function nameHereSkyline(id: number, loc: LatLon, r: Omit<CandidateResult, "id">): Promise<void> {
+  try {
+    if (!here || !hitTerrain(r)) return;
     if (!mapReady) await new Promise<void>((resolve) => map.once("load", () => resolve()));
     if (hereRequest !== id) return;
     drawSightline(loc, { lat: r.horizonLat, lon: r.horizonLon }, null, "here-sightline");
     const [feature] = await nameSkylinePoints([{ lat: r.horizonLat, lon: r.horizonLon }]);
-    if (hereRequest !== id || !feature) return;
+    if (hereRequest !== id || !feature || !here) return;
     here.skyline = feature;
     renderHere();
     drawSightline(loc, { lat: r.horizonLat, lon: r.horizonLon }, feature.name, "here-sightline");
   } catch (err) {
-    console.error(err);
-    if (hereRequest === id) renderHere("Terrain data unavailable right now.");
+    console.error(err); // the readout stands without the ridge's name
   }
 }
 
@@ -749,13 +828,29 @@ function renderHere(note?: string): void {
   } else {
     main = `Open horizon — full ${rising ? "rise" : "set"} at ${t}`;
   }
+  if (here.noData) {
+    // Part of the line toward the event did not load: a minimum, not a reading.
+    main = spotReading({
+      kind: state.kind,
+      lostMin: effect.lostMin,
+      whenText: effect.time ? timeFmt.format(effect.time) : null,
+      noData: true,
+    }).label;
+  }
   const ridge = hitTerrain(here)
     ? ` · ridge ${formatAngle(here.obstructionDeg)}, ${(here.horizonDistM / 1000).toFixed(0)} km away`
     : " · no terrain on the horizon";
   const behind = here.skyline
     ? ` · behind ${here.skyline.name}${here.skyline.eleM !== undefined ? ` (${Math.round(here.skyline.eleM).toLocaleString()} m)` : ""}`
     : "";
-  hereEl.innerHTML = `<div class="here-main g${lostGrade(effect.lostMin)}"></div><div class="here-sub"></div>`;
+  let grade: number | "u" = here.noData ? "u" : lostGrade(effect.lostMin);
+  if (facingAway()) {
+    // Opposite the sun the minutes don't apply: the reading is how low the sky goes.
+    const r = awayReading(here.obstructionDeg, here.noData);
+    main = r.label;
+    grade = r.grade;
+  }
+  hereEl.innerHTML = `<div class="here-main g${grade}"></div><div class="here-sub"></div>`;
   hereEl.querySelector(".here-main")!.textContent = main;
   hereEl.querySelector(".here-sub")!.textContent = `${facts}${ridge}${behind}${golden}`;
 }
@@ -782,6 +877,9 @@ goBtn.addEventListener("click", () => void runSearch());
 async function runSearch(): Promise<void> {
   const ev = state.events[state.kind];
   if (!ev || state.searching) return;
+  // Every search leaves its permalink, including one on the opening inputs,
+  // which no control change has written yet.
+  writeHash();
   state.searching = true;
   goBtn.disabled = true;
   try {
@@ -799,43 +897,68 @@ async function search(ev: SkyEvent): Promise<void> {
   // Results draw onto the basemap; a tap before the style has loaded waits for it.
   if (!mapReady) await new Promise<void>((resolve) => map.once("load", () => resolve()));
   clearResults();
-  statusEl.textContent = "Looking up roads and places (OpenStreetMap)…";
+  const seq = searchSeq;
+  statusEl.textContent = "Fetching elevation tiles…";
 
+  // Terrain first, OpenStreetMap alongside: the grid is scored and shown as
+  // soon as tiles are in; roads and places (one capped Overpass lookup) are
+  // scored and merged in when they arrive. Overpass never holds the screen.
   const radiusM = state.radiusKm * 1000;
   const grid = gridCandidates(state.loc, radiusM);
-  const [{ pois, ok: poisOk }, { roads, ok: roadsOk }] = await Promise.all([
-    fetchPois(state.loc, radiusM, state.mode),
-    fetchRoadCandidates(state.loc, radiusM, state.mode, ROAD_MAX_CANDIDATES),
-  ]);
-  statusEl.textContent = roadsOk
-    ? `${roads.length} roadside points, ${pois.length} mapped places — fetching terrain…`
-    : "⚠ Road lookup (Overpass) unavailable — scoring open terrain instead…";
-
-  const candidates: Candidate[] = [...grid, ...roads, ...pois];
-  const req: SearchRequest = {
-    type: "search",
-    requestId: ++requestId,
+  const osmPromise = fetchOsmCandidates(state.loc, radiusM, state.mode, ROAD_MAX_CANDIDATES);
+  const progress = (phase: ProgressPhase, done: number, total: number) => {
+    statusEl.textContent =
+      phase === "tiles" ? `Fetching elevation tiles… ${done}/${total}` : `Scoring horizons… ${done}/${total}`;
+  };
+  const base = {
+    type: "search" as const,
     origin: state.loc,
     radiusM,
-    azimuthDeg: ev.azimuthDeg,
-    spreadDeg: 8,
+    azimuthDeg: lookAzimuth(ev),
+    spreadDeg: lookSpread(),
     maxDistM: RAY_REACH_M,
     zoom: zoomForRadius(radiusM),
     eyeHeightM: 2,
+  };
+  const gridReq: SearchRequest = {
+    ...base,
+    requestId: ++requestId,
     // Town-scale only: buildings matter angularly only up close, and a
     // drive-scale bbox over a metro is more than Overpass will serve.
     buildings: radiusM <= BUILDINGS_MAX_RADIUS_M,
-    candidates: candidates.map((c) => ({ id: c.id, lat: c.lat, lon: c.lon })),
+    candidates: grid.map((c) => ({ id: c.id, lat: c.lat, lon: c.lon })),
   };
+  const gridReply = await askWorker<SearchReply>(gridReq, progress);
+  if (seq !== searchSeq) return;
+  const buildingCount = gridReply.buildingCount;
+  await presentResults(grid, gridReply.results, ev, radiusM, "pending", buildingCount, gridReq.requestId);
 
-  const { results, buildingCount } = await askWorker<SearchReply>(req, (phase, done, total) => {
-    statusEl.textContent =
-      phase === "tiles"
-        ? `Fetching elevation tiles… ${done}/${total}`
-        : `Scoring horizons… ${done}/${total}`;
-  });
-
-  await presentResults(candidates, results, ev, radiusM, { poisOk, roadsOk }, buildingCount, req.requestId);
+  const osm = await osmPromise;
+  if (seq !== searchSeq) return; // cleared or superseded meanwhile
+  const extra: Candidate[] = [...osm.roads, ...osm.pois];
+  if (!osm.ok || !extra.length) {
+    await presentResults(grid, gridReply.results, ev, radiusM, osm.ok ? "ok" : "failed", buildingCount, gridReq.requestId);
+    return;
+  }
+  statusEl.textContent = `Adding ${osm.roads.length} roadside points and ${osm.pois.length} mapped places…`;
+  const osmReq: SearchRequest = {
+    ...base,
+    requestId: ++requestId,
+    buildings: false,
+    reuseObstaclesOf: gridReq.requestId,
+    candidates: extra.map((c) => ({ id: c.id, lat: c.lat, lon: c.lon })),
+  };
+  const osmReply = await askWorker<SearchReply>(osmReq, progress);
+  if (seq !== searchSeq) return;
+  await presentResults(
+    [...grid, ...extra],
+    [...gridReply.results, ...osmReply.results],
+    ev,
+    radiusM,
+    "ok",
+    buildingCount,
+    gridReq.requestId
+  );
 }
 
 /**
@@ -884,10 +1007,12 @@ async function presentResults(
   results: CandidateResult[],
   ev: SkyEvent,
   radiusM: number,
-  ok: { poisOk: boolean; roadsOk: boolean },
+  /** OpenStreetMap roads and places: still coming, merged in, or unavailable. */
+  osm: "pending" | "ok" | "failed",
   buildingCount: number | null,
   searchRequestId: number
 ): Promise<void> {
+  const seq = searchSeq;
   const byId = new Map(results.map((r) => [r.id, r]));
   type Scored = {
     candidate: Candidate;
@@ -897,13 +1022,20 @@ async function presentResults(
     sky?: SkyOpenness;
     skyAngles?: number[];
   };
+  // Missing terrain (a tile that failed to load) is unknown, not clear:
+  // a spot standing on a gap is dropped, one looking across a gap is
+  // flagged and ranked after every spot with full data (salida-test.md, finding 7).
+  const terrainMissing = results.some((r) => r.noData);
   const scored: Scored[] = candidates
     .map((c) => ({ candidate: c, result: byId.get(c.id) }))
-    .filter((x): x is { candidate: Candidate; result: CandidateResult } => !!x.result)
+    .filter(
+      (x): x is { candidate: Candidate; result: CandidateResult } =>
+        !!x.result && Number.isFinite(x.result.groundM)
+    )
     .map((x) => ({
       ...x,
       score: score({ obstructionDeg: x.result.obstructionDeg, horizonDistM: x.result.horizonDistM }),
-      flags: [],
+      flags: x.result.noData ? [noDataFlag(ev.kind)] : [],
     }));
 
   const gridScored = scored.filter((x) => x.candidate.source === "grid");
@@ -912,7 +1044,8 @@ async function presentResults(
 
   // Heatmap shows raw terrain quality over the whole ring (grid), stretched
   // to the local score distribution.
-  const heatPoints: ScorePoint[] = gridScored.map((x) => ({
+  // Cells looking across missing terrain are left off: a colour there would be a guess.
+  const heatPoints: ScorePoint[] = gridScored.filter((x) => !x.result.noData).map((x) => ({
     lat: x.candidate.lat,
     lon: x.candidate.lon,
     score: x.score,
@@ -935,8 +1068,10 @@ async function presentResults(
   }
 
   // Ranking pool: roadside samples are on a road by construction. Without
-  // them (Overpass down) fall back to raw grid cells, honestly flagged.
-  const terrainPool = ok.roadsOk ? roadScored : gridScored;
+  // them (Overpass slow, down, or nothing mapped) fall back to raw grid
+  // cells, honestly flagged.
+  const roadsIn = roadScored.length > 0;
+  const terrainPool = roadsIn ? roadScored : gridScored;
 
   // Reachability reality check for everything NOT sampled from a road: a
   // remote 13er tagged natural=peak is exactly what this must catch.
@@ -944,7 +1079,7 @@ async function presentResults(
   const excluded = new Set<Scored>();
   if (roads) {
     const bands = roadBandsM(state.mode);
-    for (const x of [...poiScored, ...(ok.roadsOk ? [] : gridScored)]) {
+    for (const x of [...poiScored, ...(roadsIn ? [] : gridScored)]) {
       const d = roads.nearestRoadM(x.candidate);
       if (d === null || d > bands.exclude) {
         excluded.add(x); // not reachable in this travel mode; heatmap still shows it
@@ -969,7 +1104,8 @@ async function presentResults(
       : x.candidate.source === "grid"
         ? -0.25
         : 0.5 * x.candidate.weight;
-  const byRank = (a: Scored, b: Scored) => b.score + bonus(b) - (a.score + bonus(a));
+  const byRank = (a: Scored, b: Scored) =>
+    Number(a.result.noData) - Number(b.result.noData) || b.score + bonus(b) - (a.score + bonus(a));
   const finalists = [...terrainPool, ...poiScored]
     .filter((x) => !excluded.has(x))
     .sort(byRank)
@@ -1004,8 +1140,9 @@ async function presentResults(
 
   // Rank against where you are: the search waits for the origin's readout.
   await herePromise.catch(() => {});
+  if (seq !== searchSeq) return; // cleared while the sky rings ran
 
-  const spots: RankedSpot[] = top.map((x, i) => {
+  const ranked: RankedSpot[] = top.map((x, i) => {
     const c = x.candidate;
     const localTime = eventTimeAt(ev.kind, c.lat, c.lon, ev.time) ?? ev.time;
     return {
@@ -1021,6 +1158,27 @@ async function presentResults(
     };
   });
 
+  // Lead with the verdict: when nothing in the ring is worth the trip, one
+  // line says so and only a few cards follow (docs/salida-test.md, item 3).
+  // Only spots with full terrain data count toward the verdict. A spot
+  // across missing terrain loses at least what it shows, so if even that
+  // minimum could beat the cut, "nowhere is better" would be a guess: no verdict,
+  // and every card shows.
+  const known = ranked.filter((s) => !s.result.noData);
+  const unknownMightWin =
+    !!here && ranked.some((s) => s.result.noData && here!.effect.lostMin - s.effect.lostMin > VERDICT_MARGIN_MIN);
+  // The verdict is in minutes of the event, which facing away has none of.
+  const answer =
+    !facingAway() && here && here.kind === ev.kind && !here.noData && known.length && !unknownMightWin
+      ? verdict({
+          kind: ev.kind,
+          radiusKm: state.radiusKm,
+          hereLostMin: here.effect.lostMin,
+          bestGainMin: Math.max(...known.map((s) => here!.effect.lostMin - s.effect.lostMin)),
+        })
+      : null;
+  const spots = answer ? ranked.slice(0, VERDICT_MAX_CARDS) : ranked;
+
   renderSpotMarkers(
     map,
     spots.map((s) => ({
@@ -1034,48 +1192,60 @@ async function presentResults(
     }
   );
 
-  statusEl.textContent = spots.length
+  // Under a verdict the status line would only repeat it (event, radius) and
+  // cost card 1 its place above the fold on a phone.
+  statusEl.textContent = answer
+    ? ""
+    : spots.length && facingAway()
+    ? `Facing away, az ${Math.round(lookAzimuth(ev))}° ±${AWAY_SPREAD_DEG}°. Lowest skies:`
+    : spots.length
     ? `${eventLabel(ev.kind)} ${timeFmt.format(ev.time)}, az ${Math.round(ev.azimuthDeg)}°. Best spots within ${state.radiusKm} km:`
     : "No results — try a larger radius.";
 
   resultsEl.innerHTML = "";
-  const bestGain = here && here.kind === ev.kind ? Math.max(...spots.map((s) => here!.effect.lostMin - s.effect.lostMin)) : null;
-  if (bestGain !== null && spots.length && bestGain <= 1) {
-    const note = document.createElement("div");
-    note.className = "note";
-    note.textContent = "Nothing in this ring beats where you are — stay put.";
-    resultsEl.appendChild(note);
+  if (answer) {
+    const line = document.createElement("div");
+    line.id = "verdict";
+    line.className = `verdict-line ${answer.kind}`;
+    line.textContent = answer.text;
+    resultsEl.appendChild(line);
   }
-  if (stats) {
-    const legend = document.createElement("div");
-    legend.id = "legend";
-    const note =
-      stats.p50 < -1
-        ? "Terrain blocks the view everywhere near you — colors compare spots relatively."
-        : "Colors compare spots relative to your area.";
-    legend.innerHTML = `<div class="bar"></div><div class="labels"><span>worse</span><span>${note}</span><span>better</span></div>`;
-    resultsEl.appendChild(legend);
-  }
-  if (!ok.roadsOk) {
-    const warn = document.createElement("div");
-    warn.className = "warn";
-    warn.textContent =
-      "⚠ OpenStreetMap road lookup is unavailable right now — terrain picks below are raw grid cells (access unverified). Try again in a minute for roadside spots.";
-    resultsEl.appendChild(warn);
-  }
-  if (!ok.poisOk) {
-    const warn = document.createElement("div");
-    warn.className = "warn";
-    warn.textContent =
-      "⚠ OpenStreetMap place lookup is unavailable right now — no named viewpoints or parking in the results.";
-    resultsEl.appendChild(warn);
-  }
-  if (buildingCount === null) {
-    const warn = document.createElement("div");
-    warn.className = "warn";
-    warn.textContent =
-      "⚠ Building data (Overpass) unavailable right now — scores ignore buildings, so streets and blocks look more open than they are.";
-    resultsEl.appendChild(warn);
+  // The colour key and any warnings fold into one small line under the
+  // verdict, so card 1 stays above the fold on a phone (salida-test.md, item 4).
+  // Tapping the line opens the full sentences.
+  const notes = resultNotes({
+    heatmap: !!stats,
+    terrainBlocksAll: !!stats && stats.p50 < -1,
+    osm,
+    roadsIn,
+    buildingsMissing: buildingCount === null,
+    terrainMissing,
+  });
+  if (notes.short.length) {
+    const fine = document.createElement("details");
+    fine.id = "notes";
+    fine.className = "fine";
+    const summary = document.createElement("summary");
+    if (stats) {
+      const bar = document.createElement("span");
+      bar.className = "bar";
+      bar.setAttribute("aria-hidden", "true");
+      summary.appendChild(bar);
+    }
+    notes.short.forEach((phrase, i) => {
+      if (i) summary.appendChild(document.createTextNode(" · "));
+      const span = document.createElement("span");
+      if (phrase.startsWith("⚠")) span.className = "w";
+      span.textContent = phrase;
+      summary.appendChild(span);
+    });
+    fine.appendChild(summary);
+    for (const sentence of notes.full) {
+      const p = document.createElement("p");
+      p.textContent = sentence;
+      fine.appendChild(p);
+    }
+    resultsEl.appendChild(fine);
   }
   const cards = spots.map((s) => spotCard(s));
   for (const card of cards) resultsEl.appendChild(card);
@@ -1167,8 +1337,13 @@ function spotCard(s: RankedSpot): HTMLElement {
   const isPoi = !isRoad && c.source !== "grid";
   const name = c.name ?? (isRoad ? "Roadside" : isPoi ? c.label! : "Open terrain");
   const chip = isPoi || isRoad ? c.label! : "access unverified";
-  const v = effectLabel(kind, s.effect);
-  const gain = gainVsHere(s.effect);
+  const away = facingAway();
+  const v = away ? awayReading(s.result.obstructionDeg, s.result.noData) : effectLabel(kind, s.effect, s.result.noData);
+  const gain = away
+    ? here && here.kind === kind && !here.noData
+      ? awayGainVsHere(s.result.obstructionDeg, here.obstructionDeg, s.result.noData)
+      : null
+    : gainVsHere(s.effect, s.result.noData);
 
   const el = document.createElement("article");
   el.className = "spot-card";

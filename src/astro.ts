@@ -7,6 +7,7 @@ import {
   Horizon,
   Illumination,
   Observer,
+  Refraction,
   SearchAltitude,
   SearchRiseSet,
 } from "astronomy-engine";
@@ -112,9 +113,47 @@ export function eventTimeAt(kind: EventKind, lat: number, lon: number, near: Dat
 }
 
 /**
- * When the body actually appears/disappears given a terrain obstruction angle:
- * the altitude crossing of `obstructionDeg` nearest the geometric event.
- * Returns null when unobstructed or not found.
+ * The one definition of "on the horizon", for an open horizon and a ridge
+ * alike: the **top edge** of the disc, as seen through the air, touches the
+ * horizon line. That is how published rise and set times are defined, and it
+ * is what astronomy-engine's `SearchRiseSet` finds for a flat horizon (top
+ * edge, 34′ of refraction; see its docs). `SearchAltitude` instead tracks the
+ * body's **centre** with no refraction, so a ridge time found with it alone
+ * ran several minutes early against the open time it was compared with.
+ *
+ * Returns the geometric altitude the body's centre must reach for its top
+ * edge to sit apparently on a horizon at `horizonDeg`: take off the lift of
+ * refraction at that height (Saemundsson's formula, the library's "normal"
+ * `Refraction`), then the disc's angular radius at that instant.
+ */
+export function centreAltitudeForTopEdge(
+  kind: EventKind,
+  lat: number,
+  lon: number,
+  when: Date,
+  horizonDeg: number
+): number {
+  // Top edge's geometric altitude h, with h + refraction(h) = horizonDeg.
+  let h = horizonDeg;
+  for (let i = 0; i < 6; i++) h = horizonDeg - Refraction("normal", h);
+  return h - semidiameterDeg(kind, lat, lon, when);
+}
+
+const KM_PER_AU = 1.4959787069098932e8;
+
+/** Angular radius of the sun or moon disc from this spot, degrees. */
+export function semidiameterDeg(kind: EventKind, lat: number, lon: number, when: Date): number {
+  const body = bodyOf(kind);
+  const radiusKm = body === Body.Sun ? 695_700 : 1_738.1; // the library's own radii
+  const eq = Equator(body, new AstroTime(when), new Observer(lat, lon, 0), true, true);
+  return (Math.asin(radiusKm / KM_PER_AU / eq.dist) * 180) / Math.PI;
+}
+
+/**
+ * When the body actually appears/disappears behind terrain whose apparent
+ * angle is `obstructionDeg`: the moment its top edge meets the ridge line,
+ * by the same definition as the open-horizon time (`centreAltitudeForTopEdge`).
+ * Returns null when the horizon is open (at or below flat) or not found.
  */
 export function obstructedEventTime(
   kind: EventKind,
@@ -123,12 +162,13 @@ export function obstructedEventTime(
   eventTime: Date,
   obstructionDeg: number
 ): Date | null {
-  if (obstructionDeg <= 0.05) return null;
+  if (!(obstructionDeg > 0)) return null;
   const obs = new Observer(lat, lon, 0);
   const dir = directionOf(kind);
-  // Rising: body clears the ridge after geometric rise. Setting: it vanishes before.
+  const target = centreAltitudeForTopEdge(kind, lat, lon, eventTime, obstructionDeg);
+  // Rising: body clears the ridge after the open rise. Setting: it vanishes before.
   const start = new Date(eventTime.getTime() - (dir === 1 ? 0.5 : 6) * 3600_000);
-  const t = SearchAltitude(bodyOf(kind), obs, dir, start, 0.5, obstructionDeg);
+  const t = SearchAltitude(bodyOf(kind), obs, dir, start, 0.5, target);
   return t ? t.date : null;
 }
 

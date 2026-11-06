@@ -1,8 +1,16 @@
 /** Shared geodesy helpers (spherical earth — fine at our accuracy). */
 
 export const EARTH_RADIUS_M = 6371008.8;
-/** Effective radius including standard atmospheric refraction (k ≈ 0.13). */
-export const EFFECTIVE_RADIUS_M = EARTH_RADIUS_M / (1 - 0.13);
+/**
+ * Effective radius including standard atmospheric refraction for visible
+ * light: R′ = 7/6 R, i.e. refraction coefficient k = 1/7 ≈ 0.143 in
+ * R′ = R / (1 − k). Source: Wikipedia, "Horizon", § Effect of atmospheric
+ * refraction › Simple method—Young (citing A. T. Young, "Distance to the
+ * Horizon", SDSU). https://en.wikipedia.org/wiki/Horizon#Simple_method%E2%80%94Young
+ * Real refraction varies with the air's temperature gradient; this is the
+ * standard-atmosphere figure.
+ */
+export const EFFECTIVE_RADIUS_M = (EARTH_RADIUS_M * 7) / 6;
 
 export const DEG = Math.PI / 180;
 

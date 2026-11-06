@@ -46,7 +46,9 @@ export function tileKeyString(k: TileKey): string {
 
 /**
  * Fetches, decodes and caches terrarium tiles; samples elevations bilinearly.
- * Failed/ocean-missing tiles are cached as null and sample as 0 m.
+ * A tile that failed to load is cached as null and samples as NaN: no data,
+ * not sea level. At 2,100 m in Salida a missing tile read as 0 m was a 2 km
+ * hole that made rays look clear (docs/salida-test.md, finding 7).
  */
 export class TileCache {
   private tiles = new Map<string, Float32Array | null>();
@@ -55,6 +57,11 @@ export class TileCache {
 
   has(k: TileKey): boolean {
     return this.tiles.has(tileKeyString(k));
+  }
+
+  /** Store a decoded tile, or null for one that failed to load. */
+  put(k: TileKey, elevations: Float32Array | null): void {
+    this.tiles.set(tileKeyString(k), elevations);
   }
 
   /** Fetch+decode all missing tiles, with limited concurrency. */
@@ -79,7 +86,6 @@ export class TileCache {
   }
 
   private async fetchOne(k: TileKey): Promise<void> {
-    const key = tileKeyString(k);
     try {
       let res: Response | null = null;
       // Dev only: try the local pre-downloaded cache first (scripts/fetch-terrain.mjs).
@@ -99,9 +105,9 @@ export class TileCache {
       ctx.drawImage(bmp, 0, 0);
       bmp.close();
       const { data } = ctx.getImageData(0, 0, TILE_SIZE, TILE_SIZE);
-      this.tiles.set(key, decodeTerrarium(data));
+      this.put(k, decodeTerrarium(data));
     } catch {
-      this.tiles.set(key, null);
+      this.put(k, null);
     }
   }
 
@@ -116,7 +122,8 @@ export class TileCache {
   /**
    * Bilinear elevation sample at lat/lon from cached tiles, clamped ≥ 0
    * (terrarium encodes bathymetry; the sea *surface* is the horizon blocker).
-   * Missing tiles sample as 0.
+   * A tile that is missing or failed to load samples as NaN (no data);
+   * callers must treat that as unknown, never as clear.
    */
   sampleElevation(lat: number, lon: number, z: number): number {
     const n = 2 ** z;
@@ -125,7 +132,7 @@ export class TileCache {
     const tx = ((Math.floor(fx) % n) + n) % n;
     const ty = Math.min(n - 1, Math.max(0, Math.floor(fy)));
     const tile = this.tiles.get(`${z}/${tx}/${ty}`);
-    if (!tile) return 0;
+    if (!tile) return NaN;
     // Pixel coords within tile; clamp to the tile (1-px seam error is fine).
     const px = Math.min(TILE_SIZE - 1.001, Math.max(0, (fx - Math.floor(fx)) * TILE_SIZE - 0.5));
     const py = Math.min(TILE_SIZE - 1.001, Math.max(0, (fy - Math.floor(fy)) * TILE_SIZE - 0.5));

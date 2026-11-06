@@ -10,6 +10,7 @@ import { DEG, destination, type LatLon } from "../geo";
 import { horizonFan, horizonRing, type ObstacleField } from "../elevation/horizon";
 import {
   metersPerPixel,
+  TILE_SIZE,
   TileCache,
   tileKeyString,
   tilesForBBox,
@@ -29,6 +30,11 @@ export interface SearchRequest {
   eyeHeightM: number;
   /** Fetch OSM building footprints and march them as near-field blockers. */
   buildings: boolean;
+  /**
+   * Score against the building raster of this earlier search instead of
+   * fetching footprints again (the OSM pass after the terrain-first pass).
+   */
+  reuseObstaclesOf?: number;
   candidates: { id: string; lat: number; lon: number }[];
 }
 
@@ -65,6 +71,8 @@ export interface CandidateResult {
   /** Point on the skyline the event happens behind (centre ray). */
   horizonLat: number;
   horizonLon: number;
+  /** The event rays crossed missing terrain (or the spot sits on it). */
+  noData: boolean;
 }
 
 export interface RingResult {
@@ -111,10 +119,17 @@ function corridorTiles(req: {
 }): TileKey[] {
   const { origin, radiusM, azimuthDeg, spreadDeg, maxDistM, zoom } = req;
   const seen = new Map<string, TileKey>();
-  // A zero-radius probe still needs the tile under the point plus a margin.
-  const pad = Math.max(radiusM * 1.15, 500);
-  const sweepStep = Math.min(15_000, maxDistM / 8);
-  for (let d = 0; d <= maxDistM; d += sweepStep) {
+  // Sweep points no farther apart than half a tile, each padded by at least
+  // half the spacing, so every point of every ray lies inside some padded
+  // box. With a fixed 15 km sweep and a 500 m pad the probe used to skip the
+  // tiles between sweep points, and they read as 0 m; now a skipped tile
+  // would read as missing, so the cover has to be complete.
+  const tileM = metersPerPixel(origin.lat, zoom) * TILE_SIZE;
+  const sweepStep = Math.min(15_000, maxDistM / 8, tileM / 2);
+  const pad = Math.max(radiusM * 1.15, sweepStep * 0.6, 500);
+  // The march's last step can overshoot maxDistM by ~1%.
+  const reach = maxDistM * 1.02 + sweepStep;
+  for (let d = 0; d <= reach; d += sweepStep) {
     for (const az of [azimuthDeg - spreadDeg, azimuthDeg, azimuthDeg + spreadDeg]) {
       const c = d === 0 ? origin : destination(origin, d, az);
       const dLat = pad / 111_320;
@@ -171,10 +186,16 @@ async function handleSearch(req: SearchRequest): Promise<void> {
     ),
     req.buildings ? fetchBuildings(req.origin, req.radiusM) : Promise.resolve(null),
   ]);
-  const obstacles: ObstacleField | undefined = grid
+  let obstacles: ObstacleField | undefined = grid
     ? { sample: grid.sample, maxDistM: BUILDING_RANGE_M, stepM: grid.cellM }
     : undefined;
-  lastObstacles = { searchRequestId: req.requestId, obstacles };
+  if (req.reuseObstaclesOf !== undefined) {
+    // Second pass of one search: keep the first pass's raster (and keep it
+    // as the one the ring follow-up asks for).
+    if (lastObstacles.searchRequestId === req.reuseObstaclesOf) obstacles = lastObstacles.obstacles;
+  } else {
+    lastObstacles = { searchRequestId: req.requestId, obstacles };
+  }
 
   const stepM = Math.max(40, metersPerPixel(req.origin.lat, req.zoom));
   const results: CandidateResult[] = [];
@@ -194,6 +215,7 @@ async function handleSearch(req: SearchRequest): Promise<void> {
       groundM: r.groundM,
       horizonLat: r.horizonLat,
       horizonLon: r.horizonLon,
+      noData: r.noData,
     });
     if (i % 50 === 0) {
       post({
@@ -234,6 +256,7 @@ async function handleProbe(req: ProbeRequest): Promise<void> {
       groundM: r.groundM,
       horizonLat: r.horizonLat,
       horizonLon: r.horizonLon,
+      noData: r.noData,
     },
   });
 }
