@@ -23,30 +23,36 @@
     </header>
 
     <section id="panel">
-      <div id="panel-controls">
-        <div id="modes" role="group" aria-label="Travel mode">
-          <button data-mode="walk">Walk</button>
-          <button data-mode="bike">Bike</button>
-          <button data-mode="drive" class="active">Drive</button>
-        </div>
-        <div id="facing" role="group" aria-label="Which sky">
-          <button data-facing="sun" class="active" title="Spots where the sun stays in view longest">Sun</button>
-          <button data-facing="away" title="Spots with the lowest, widest sky opposite the sun: the Belt of Venus and Earth's shadow">Away</button>
-        </div>
-        <label id="radius-row">
-          <input id="radius" type="range" min="1" max="40" step="1" value="25" />
-          <span id="radius-value">25 km</span>
-        </label>
-        <div id="actions">
-          <button id="go">Find spots</button>
-          <button id="clear" hidden>Clear</button>
-        </div>
-      </div>
       <div id="here" hidden></div>
-      <div id="status" role="status"></div>
-      <div id="results"></div>
+      <div id="facing-row">
+        <div id="facing" role="group" aria-label="Which sky">
+          <button data-facing="sun" class="active" title="The sun itself, and when it goes behind the ridge or a building">Sun</button>
+          <button data-facing="away" title="The sky opposite the sun: the Belt of Venus and Earth's shadow">Away</button>
+        </div>
+        <span class="hint">Tap the map or drag the pin to check another spot.</span>
+      </div>
+      <details id="find">
+        <summary>Find a better spot nearby</summary>
+        <div id="panel-controls">
+          <div id="modes" role="group" aria-label="Travel mode">
+            <button data-mode="walk">Walk</button>
+            <button data-mode="bike">Bike</button>
+            <button data-mode="drive" class="active">Drive</button>
+          </div>
+          <label id="radius-row">
+            <input id="radius" type="range" min="1" max="40" step="1" value="25" />
+            <span id="radius-value">25 km</span>
+          </label>
+          <div id="actions">
+            <button id="go">Find spots</button>
+            <button id="clear" hidden>Clear</button>
+          </div>
+        </div>
+        <div id="status" role="status"></div>
+        <div id="results"></div>
+      </details>
       <details id="method" class="fine">
-        <summary>How the times are worked out</summary>
+        <summary>© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> · sources and how times are worked out</summary>
         <p>
           Sunset is the moment the top edge of the sun drops out of sight, the
           definition published times use
@@ -58,19 +64,24 @@
           gains or loses are the terrain alone. The moon is timed the same way.
         </p>
         <p>
+          In town, buildings within 600 m of the pin, toward the event, are counted too, from OpenStreetMap
+          footprints: a building's tagged height, else 3 m a storey, else one storey of 4 m
+          (most footprints carry no height, so that last one is a guess).
+        </p>
+        <p>
           <strong>Away</strong> looks at the 60° of sky straight opposite the sun. The Belt of
           Venus is a pink band "roughly 10–20° above the horizon" there during twilight, over
           the dark band of Earth's shadow
           (<a href="https://en.wikipedia.org/wiki/Belt_of_Venus" target="_blank" rel="noopener">Wikipedia, Belt of Venus</a>),
           so a spot is graded by how low its horizon is on that side.
         </p>
+        <p id="credits">
+          Map © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>
+          contributors · Terrain:
+          <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">Mapzen/AWS Open Data</a>
+          (SRTM, NASA/USGS, ETOPO1 &amp; others) · Roads, places and buildings via the Overpass API
+        </p>
       </details>
-      <footer id="credits">
-        Map © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>
-        contributors · Terrain:
-        <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">Mapzen/AWS Open Data</a>
-        (SRTM, NASA/USGS, ETOPO1 &amp; others) · POIs via Overpass API
-      </footer>
     </section>
 
     <script type="module" src="/src/main.ts"></script>

@@ -40,6 +40,7 @@ import {
 } from "./search/score";
 import type {
   CandidateResult,
+  ProbeBuildings,
   ProbeRequest,
   RingRequest,
   SearchRequest,
@@ -60,6 +61,8 @@ interface State {
   searching: boolean;
   /** Which sky the search is for: toward the sun, or the sky opposite it (sun events only). */
   facing: "sun" | "away";
+  /** A Find spots search is showing; the permalink then reruns it (`,find`). */
+  found: boolean;
 }
 
 const MODE_DEFAULT_KM: Record<TravelMode, number> = { walk: 2, bike: 8, drive: 25 };
@@ -74,6 +77,7 @@ const state: State = {
   golden: {},
   searching: false,
   facing: "sun",
+  found: false,
 };
 
 /** True when the search looks at the sky opposite the sun (src/search/away.ts). */
@@ -101,7 +105,7 @@ function baseTime(): Date {
   return new Date(y, m - 1, d, 0, 0, 0);
 }
 
-// Permalink: #lat,lon,kind,mode,radius[,date][,away]
+// Permalink: #lat,lon,kind,mode,radius[,date][,away][,find]
 /** True when the page opened on a shared/bookmarked permalink (auto-searches). */
 let openedFromHash = false;
 function readHash(): void {
@@ -119,6 +123,7 @@ function readHash(): void {
     if (Number.isFinite(r)) state.radiusKm = Math.min(40, Math.max(1, r));
     if (m[5] && /^\d{4}-\d{2}-\d{2}$/.test(m[5])) state.date = m[5];
     if (m.slice(5).includes("away")) state.facing = "away";
+    if (m.slice(5).includes("find")) state.found = true;
   }
 }
 function writeHash(): void {
@@ -126,7 +131,7 @@ function writeHash(): void {
   history.replaceState(
     null,
     "",
-    `#${state.loc.lat.toFixed(5)},${state.loc.lon.toFixed(5)},${state.kind},${state.mode},${state.radiusKm}${date}${facingAway() ? ",away" : ""}`
+    `#${state.loc.lat.toFixed(5)},${state.loc.lon.toFixed(5)},${state.kind},${state.mode},${state.radiusKm}${date}${facingAway() ? ",away" : ""}${state.found ? ",find" : ""}`
   );
 }
 
@@ -254,6 +259,8 @@ const SIGHTLINE_KEYS = ["here-sightline", "sightline"] as const;
 type SightlineKey = (typeof SIGHTLINE_KEYS)[number];
 /** Vector overlays that must stay readable above the (re-added) score raster. */
 const OVERLAY_LAYERS = [
+  "here-building-fill",
+  "here-building-line",
   ...AZIMUTH_LAYERS,
   ...SIGHTLINE_KEYS.flatMap((k) => [`${k}-line`, `${k}-point`, `${k}-label`]),
 ];
@@ -447,6 +454,45 @@ function clearSightline(key: SightlineKey = "sightline"): void {
   if (src) src.setData({ type: "FeatureCollection", features: [] });
 }
 
+// ---------- the building the pin's sun goes behind ----------
+
+function drawHereBuilding(ring: LatLon[] | null): void {
+  const data: FeatureCollection = {
+    type: "FeatureCollection",
+    features: ring
+      ? [
+          {
+            type: "Feature",
+            properties: {},
+            geometry: { type: "Polygon", coordinates: [[...ring, ring[0]].map((p) => [p.lon, p.lat])] },
+          },
+        ]
+      : [],
+  };
+  if (!mapReady) return;
+  const src = map.getSource("here-building") as maplibregl.GeoJSONSource | undefined;
+  if (src) {
+    src.setData(data);
+  } else {
+    map.addSource("here-building", { type: "geojson", data });
+    map.addLayer({
+      id: "here-building-fill",
+      type: "fill",
+      source: "here-building",
+      paint: { "fill-opacity": 0.35 },
+    });
+    map.addLayer({
+      id: "here-building-line",
+      type: "line",
+      source: "here-building",
+      paint: { "line-width": 2.5 },
+    });
+  }
+  const color = EVENT_COLORS[state.kind];
+  map.setPaintProperty("here-building-fill", "fill-color", color);
+  map.setPaintProperty("here-building-line", "line-color", color);
+}
+
 // ---------- UI elements ----------
 
 const eventsNav = document.getElementById("events")!;
@@ -454,6 +500,8 @@ const hereEl = document.getElementById("here")!;
 const resultsEl = document.getElementById("results")!;
 const statusEl = document.getElementById("status")!;
 const goBtn = document.getElementById("go") as HTMLButtonElement;
+/** Find spots sits behind this fold, closed on open (docs/design.md, *In town*). */
+const findEl = document.getElementById("find") as HTMLDetailsElement;
 const clearBtn = document.getElementById("clear") as HTMLButtonElement;
 const radiusInput = document.getElementById("radius") as HTMLInputElement;
 const radiusValue = document.getElementById("radius-value")!;
@@ -600,12 +648,15 @@ function clearResults(): void {
 
 clearBtn.addEventListener("click", () => {
   clearResults();
+  state.found = false;
+  writeHash();
   statusEl.textContent = "";
 });
 
 function setLocation(loc: LatLon, pan: boolean): void {
   state.loc = loc;
   clearResults(); // results were for the old origin
+  state.found = false;
   originMarker.setLngLat([loc.lon, loc.lat]);
   if (pan) map.flyTo({ center: [loc.lon, loc.lat], zoom: Math.max(map.getZoom(), 10) });
   refreshEvents();
@@ -636,6 +687,7 @@ dateInput.min = todayStr();
 dateInput.addEventListener("change", () => {
   state.date = dateInput.value && dateInput.value !== todayStr() ? dateInput.value : "";
   clearResults();
+  state.found = false;
   refreshEvents();
   writeHash();
 });
@@ -723,6 +775,10 @@ interface HereResult extends Omit<CandidateResult, "id"> {
   loc: LatLon;
   effect: ObstructionEffect;
   skyline?: SkylineFeature | null;
+  /** The footprint pass: absent while it runs (or for a terrain-only read). */
+  buildings?: ProbeBuildings;
+  /** The footprint pass is still waiting on Overpass. */
+  buildingsPending?: boolean;
 }
 let here: HereResult | null = null;
 let hereRequest = 0;
@@ -738,6 +794,7 @@ async function doProbeHere(): Promise<void> {
   const ev = state.events[state.kind];
   here = null;
   clearSightline("here-sightline");
+  drawHereBuilding(null);
   if (!ev) {
     renderHere();
     return;
@@ -771,24 +828,66 @@ async function doProbeHere(): Promise<void> {
       loc,
       effect: obstructionEffect(ev.kind, loc.lat, loc.lon, ev.time, r.obstructionDeg),
     };
+    here.buildingsPending = true;
     renderHere();
     // The ridge's name is decoration from Overpass: name it in the
     // background, so a search waiting on this readout never waits on OSM.
     void nameHereSkyline(id, loc, r);
+    // In town the skyline is often a building: march the footprints near
+    // the pin too, and let that answer replace this one (docs/design.md,
+    // *In town: footprints first*).
+    void probeHereBuildings(id, req, ev);
   } catch (err) {
     console.error(err);
     if (hereRequest === id) renderHere("Terrain data unavailable right now.");
   }
 }
 
+async function probeHereBuildings(id: number, terrainReq: ProbeRequest, ev: SkyEvent): Promise<void> {
+  let reply: ProbeReply | null = null;
+  try {
+    reply = await askWorker<ProbeReply>({ ...terrainReq, requestId: ++requestId, buildings: true }, () => {});
+  } catch (err) {
+    console.error(err);
+  }
+  if (hereRequest !== id || !here) return;
+  here.buildingsPending = false;
+  const b = reply?.buildings;
+  if (!reply || !b) {
+    here.buildings = { count: null, blockedByBuilding: false, footprint: null };
+    renderHere();
+    return;
+  }
+  here.buildings = b;
+  if (b.blockedByBuilding) {
+    const r = reply.result;
+    Object.assign(here, {
+      obstructionDeg: r.obstructionDeg,
+      horizonDistM: r.horizonDistM,
+      horizonLat: r.horizonLat,
+      horizonLon: r.horizonLon,
+      effect: obstructionEffect(ev.kind, here.loc.lat, here.loc.lon, ev.time, r.obstructionDeg),
+      skyline: null,
+    });
+    if (!mapReady) await new Promise<void>((resolve) => map.once("load", () => resolve()));
+    if (hereRequest !== id) return;
+    drawSightline(here.loc, { lat: r.horizonLat, lon: r.horizonLon }, null, "here-sightline");
+    drawHereBuilding(b.footprint);
+    // Buildings draw from zoom 13 and are only readable closer in: show the
+    // one in the way next to the pin.
+    if (map.getZoom() < 15) map.easeTo({ center: [here.loc.lon, here.loc.lat], zoom: 16 });
+  }
+  renderHere();
+}
+
 async function nameHereSkyline(id: number, loc: LatLon, r: Omit<CandidateResult, "id">): Promise<void> {
   try {
     if (!here || !hitTerrain(r)) return;
     if (!mapReady) await new Promise<void>((resolve) => map.once("load", () => resolve()));
-    if (hereRequest !== id) return;
+    if (hereRequest !== id || here.buildings?.blockedByBuilding) return;
     drawSightline(loc, { lat: r.horizonLat, lon: r.horizonLon }, null, "here-sightline");
     const [feature] = await nameSkylinePoints([{ lat: r.horizonLat, lon: r.horizonLon }]);
-    if (hereRequest !== id || !feature || !here) return;
+    if (hereRequest !== id || !feature || !here || here.buildings?.blockedByBuilding) return;
     here.skyline = feature;
     renderHere();
     drawSightline(loc, { lat: r.horizonLat, lon: r.horizonLon }, feature.name, "here-sightline");
@@ -819,12 +918,14 @@ function renderHere(note?: string): void {
 
   const rising = state.kind.endsWith("rise");
   const { effect } = here;
+  const building = !!here.buildings?.blockedByBuilding;
+  const what = building ? "a building" : "the ridge";
   let main: string;
   if (effect.time) {
     const az = Math.round(azimuthAtTime(state.kind, here.loc.lat, here.loc.lon, effect.time));
     main = rising
-      ? `Over the ridge ~${timeFmt.format(effect.time)} · az ${az}° (+${effect.lostMin} min)`
-      : `Behind the ridge ~${timeFmt.format(effect.time)} · az ${az}° (−${effect.lostMin} min)`;
+      ? `Over ${what} ~${timeFmt.format(effect.time)} · az ${az}° (+${effect.lostMin} min)`
+      : `Behind ${what} ~${timeFmt.format(effect.time)} · az ${az}° (−${effect.lostMin} min)`;
   } else {
     main = `Open horizon — full ${rising ? "rise" : "set"} at ${t}`;
   }
@@ -837,9 +938,18 @@ function renderHere(note?: string): void {
       noData: true,
     }).label;
   }
-  const ridge = hitTerrain(here)
-    ? ` · ridge ${formatAngle(here.obstructionDeg)}, ${(here.horizonDistM / 1000).toFixed(0)} km away`
-    : " · no terrain on the horizon";
+  const ridge = building
+    ? ` · a building ${Math.round(here.horizonDistM)} m away, ${formatAngle(here.obstructionDeg)}`
+    : hitTerrain(here)
+      ? ` · ridge ${formatAngle(here.obstructionDeg)}, ${(here.horizonDistM / 1000).toFixed(0)} km away`
+      : " · no terrain on the horizon";
+  const bnote = here.buildingsPending
+    ? " · checking buildings…"
+    : here.buildings && here.buildings.count === null
+      ? " · buildings not checked (map data didn't load)"
+      : here.buildings && !building && here.buildings.count
+        ? " · no building in the way"
+        : "";
   const behind = here.skyline
     ? ` · behind ${here.skyline.name}${here.skyline.eleM !== undefined ? ` (${Math.round(here.skyline.eleM).toLocaleString()} m)` : ""}`
     : "";
@@ -852,7 +962,7 @@ function renderHere(note?: string): void {
   }
   hereEl.innerHTML = `<div class="here-main g${grade}"></div><div class="here-sub"></div>`;
   hereEl.querySelector(".here-main")!.textContent = main;
-  hereEl.querySelector(".here-sub")!.textContent = `${facts}${ridge}${behind}${golden}`;
+  hereEl.querySelector(".here-sub")!.textContent = `${facts}${ridge}${behind}${bnote}${golden}`;
 }
 
 // ---------- find spots ----------
@@ -879,6 +989,8 @@ async function runSearch(): Promise<void> {
   if (!ev || state.searching) return;
   // Every search leaves its permalink, including one on the opening inputs,
   // which no control change has written yet.
+  state.found = true;
+  findEl.open = true;
   writeHash();
   state.searching = true;
   goBtn.disabled = true;
@@ -1401,9 +1513,15 @@ function spotCard(s: RankedSpot): HTMLElement {
 refreshEvents();
 map.on("load", () => {
   mapReady = true;
+  // The compact attribution opens expanded and covers the bottom of a phone
+  // map; fold it to its ⓘ. The OpenStreetMap credit stays on screen in the
+  // panel's last line (index.html, #method).
+  document.querySelector(".maplibregl-ctrl-attrib.maplibregl-compact-show")?.classList.remove("maplibregl-compact-show");
+  document.querySelector(".maplibregl-ctrl-attrib")?.removeAttribute("open");
   drawAzimuth();
 });
-// A shared link should land on results, not a blank slate asking for a tap.
-// The hash restores only the inputs (results are computed live), so run the
-// search the link describes. search() itself waits for the basemap.
-if (openedFromHash) void runSearch();
+// A link copied after a search (`,find`) should land on results, not a
+// blank slate asking for a tap. The hash restores only the inputs (results
+// are computed live), so run the search the link describes; search() itself
+// waits for the basemap. Any other link opens on the pin and its readout.
+if (openedFromHash && state.found) void runSearch();

@@ -241,8 +241,6 @@ body {
 /* From-here readout: the answer for the pin, no search needed. */
 #here {
   padding: 0 12px 8px;
-  border-bottom: 1px solid var(--hairline);
-  margin-bottom: 6px;
 }
 #here[hidden] {
   display: none;
@@ -438,7 +436,6 @@ body {
 }
 
 #credits {
-  padding: 6px 12px 10px;
   font-size: 10px;
   color: var(--muted);
   line-height: 1.5;
@@ -509,5 +506,48 @@ body {
 }
 
 #facing[hidden] { display: none; }
-#method { margin: 4px 12px; }
+#method { margin: 4px 12px 8px; }
 #method p { margin: 6px 0; }
+
+/* The panel is the pin's answer first; Find spots is behind a fold. */
+#panel {
+  overflow-y: auto;
+  padding-top: 10px;
+}
+#facing-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 8px;
+}
+#facing-row .hint {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.3;
+}
+#find {
+  border-top: 1px solid var(--hairline);
+}
+#find > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 9px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+#find > summary::-webkit-details-marker {
+  display: none;
+}
+#find > summary::after {
+  content: " ▸";
+}
+#find[open] > summary::after {
+  content: " ▾";
+}
+#find #panel-controls {
+  padding-top: 0;
+}
+#method summary a {
+  color: inherit;
+}
