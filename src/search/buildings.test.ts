@@ -62,4 +62,13 @@ describe("buildGrid", () => {
     expect(grid.count).toBe(0);
     expect(grid.sample(39, -105)).toBe(0);
   });
+
+  it("finds the footprint a blocker point lies on, and none in the street", () => {
+    const tall = square(20, 0, 10, { height: "9" });
+    const grid = buildGrid([square(-20, 0, 10, {}), tall], centre, 200);
+    expect(grid.footprintAt(39, -105 + 20 * mLon)).toEqual(tall.geometry);
+    // On the outline cell just outside the polygon still names the building.
+    expect(grid.footprintAt(39, -105 + 30.5 * mLon)).toEqual(tall.geometry);
+    expect(grid.footprintAt(39, -105)).toBeNull();
+  });
 });

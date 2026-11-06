@@ -16,7 +16,14 @@ import {
   tilesForBBox,
   type TileKey,
 } from "../elevation/tiles";
-import { BUILDING_RANGE_M, fetchBuildings } from "./buildings";
+import {
+  BUILDING_RANGE_M,
+  boxContains,
+  fetchBuildings,
+  fetchBuildingsBox,
+  type BuildingGrid,
+  type Box,
+} from "./buildings";
 
 export interface SearchRequest {
   type: "search";
@@ -61,6 +68,18 @@ export interface ProbeRequest {
   maxDistM: number;
   zoom: number;
   eyeHeightM: number;
+  /** Also march OSM building footprints near the point (the town readout). */
+  buildings?: boolean;
+}
+
+/** What the footprints did to a probe; absent on a terrain-only probe. */
+export interface ProbeBuildings {
+  /** Footprints marched; null = Overpass failed, terrain-only. */
+  count: number | null;
+  /** The skyline toward the event is a building, not terrain. */
+  blockedByBuilding: boolean;
+  /** That building's outline, when one blocks. */
+  footprint: LatLon[] | null;
 }
 
 export interface CandidateResult {
@@ -97,7 +116,12 @@ export type WorkerMessage =
       buildingCount: number | null;
     }
   | { type: "ringResult"; requestId: number; results: RingResult[] }
-  | { type: "probeResult"; requestId: number; result: Omit<CandidateResult, "id"> }
+  | {
+      type: "probeResult";
+      requestId: number;
+      result: Omit<CandidateResult, "id">;
+      buildings?: ProbeBuildings;
+    }
   /** The request threw; main rejects it instead of waiting forever. */
   | { type: "error"; requestId: number; message: string };
 
@@ -235,18 +259,80 @@ async function handleSearch(req: SearchRequest): Promise<void> {
   });
 }
 
+/**
+ * Footprints for the pin's readout: only the corridor the rays cross within
+ * the blocker range, padded by PROBE_PAD_M so the next pin a short way along
+ * the street reuses them instead of asking Overpass again.
+ */
+const PROBE_PAD_M = 250;
+/**
+ * How far out the readout looks for buildings. From eye height (2 m) a
+ * one-storey (4 m) building is 0.2° up at 600 m and a 12 m one about 1°;
+ * past that the terrain is almost always the higher skyline, and the
+ * corridor (and the Overpass answer) stays small.
+ */
+const PROBE_BUILDING_RANGE_M = 600;
+let probeGrid: { box: Box; grid: Promise<BuildingGrid | null> } | null = null;
+
+function corridorBox(point: LatLon, azimuthDeg: number, spreadDeg: number, padM: number): Box {
+  const pts = [point];
+  for (const off of [-spreadDeg, -spreadDeg / 2, 0, spreadDeg / 2, spreadDeg]) {
+    pts.push(destination(point, PROBE_BUILDING_RANGE_M, azimuthDeg + off));
+  }
+  const dLat = padM / 111_320;
+  const dLon = padM / (111_320 * Math.cos(point.lat * DEG));
+  return {
+    s: Math.min(...pts.map((p) => p.lat)) - dLat,
+    n: Math.max(...pts.map((p) => p.lat)) + dLat,
+    w: Math.min(...pts.map((p) => p.lon)) - dLon,
+    e: Math.max(...pts.map((p) => p.lon)) + dLon,
+  };
+}
+
+function probeBuildings(req: ProbeRequest): Promise<BuildingGrid | null> {
+  const need = corridorBox(req.point, req.azimuthDeg, req.spreadDeg, 30);
+  if (probeGrid && boxContains(probeGrid.box, need)) return probeGrid.grid;
+  const box = corridorBox(req.point, req.azimuthDeg, req.spreadDeg, PROBE_PAD_M);
+  const grid = fetchBuildingsBox(box);
+  probeGrid = { box, grid };
+  // A failed fetch is not kept: the next pin tries again.
+  void grid.then((g) => {
+    if (!g && probeGrid?.grid === grid) probeGrid = null;
+  });
+  return grid;
+}
+
 async function handleProbe(req: ProbeRequest): Promise<void> {
   const keys = corridorTiles({ ...req, origin: req.point, radiusM: 0 });
-  await cache.fetchTiles(keys, (done, total) =>
-    post({ type: "progress", requestId: req.requestId, phase: "tiles", done, total })
-  );
+  const [, grid] = await Promise.all([
+    cache.fetchTiles(keys, (done, total) =>
+      post({ type: "progress", requestId: req.requestId, phase: "tiles", done, total })
+    ),
+    req.buildings ? probeBuildings(req) : Promise.resolve(null),
+  ]);
   const stepM = Math.max(40, metersPerPixel(req.point.lat, req.zoom));
   const sample = (lat: number, lon: number) => cache.sampleElevation(lat, lon, req.zoom);
+  const obstacles: ObstacleField | undefined = grid
+    ? { sample: grid.sample, maxDistM: PROBE_BUILDING_RANGE_M, stepM: grid.cellM }
+    : undefined;
   const r = horizonFan(sample, req.point.lat, req.point.lon, req.azimuthDeg, req.spreadDeg, {
     maxDistM: req.maxDistM,
     startStepM: stepM,
     eyeHeightM: req.eyeHeightM,
+    obstacles,
   });
+  let buildings: ProbeBuildings | undefined;
+  if (req.buildings) {
+    // The centre ray's skyline is a building when it sits inside the
+    // blocker range on a footprint cell.
+    const onBuilding =
+      !!grid && r.horizonDistM <= PROBE_BUILDING_RANGE_M && grid.sample(r.horizonLat, r.horizonLon) > 0;
+    buildings = {
+      count: grid ? grid.count : null,
+      blockedByBuilding: onBuilding,
+      footprint: onBuilding ? grid!.footprintAt(r.horizonLat, r.horizonLon) : null,
+    };
+  }
   post({
     type: "probeResult",
     requestId: req.requestId,
@@ -258,6 +344,7 @@ async function handleProbe(req: ProbeRequest): Promise<void> {
       horizonLon: r.horizonLon,
       noData: r.noData,
     },
+    buildings,
   });
 }
 
