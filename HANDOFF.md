@@ -1,5 +1,7 @@
 # Handoff
 
+**Favicon** (2026-11-07): `favicon.ico`, `favicon.svg` and `apple-touch-icon.png` sit in `public/` (Vite copies it into `dist/`) and every page links them; a new page links the same three before it goes live. Live check: `curl -s -o /dev/null -w '%{content_type}' https://horizon.myjimmycloud.com/favicon.ico` must print an image type (Pages answers a missing file with the home page, so a 200 alone proves nothing).
+
 **Hosting (2026-11-06):** the site is on Cloudflare Pages, project `horizon`,
 address `horizon-abl.pages.dev`; horizon.myjimmycloud.com is a proxied CNAME to
 it. `public/CNAME` is gone and `deploy.yml` only installs, tests and builds, so
