@@ -1,5 +1,14 @@
 # Handoff
 
+**Hosting (2026-11-06):** the site is on Cloudflare Pages, project `horizon`,
+address `horizon-abl.pages.dev`; horizon.myjimmycloud.com is a proxied CNAME to
+it. `public/CNAME` is gone and `deploy.yml` only installs, tests and builds, so
+**a merge goes live only by** `npm ci && npm run build`, then
+`wrangler pages deploy dist --project-name horizon --branch main`. GitHub
+Pages is still switched on in the repo's Settings as the way back (one DNS
+change to `jimmylowell.github.io`, DNS-only); turning it off is Jimmy's.
+`README.md` lines 81–84 still describe GitHub Pages and are his to change.
+
 **State:** the pin's readout now counts buildings, from Jimmy's note of
 2026-11-06 after trying it in Salida ("footprints would be the best").
 Design in `docs/design.md`, *In town: footprints first* (that file came in

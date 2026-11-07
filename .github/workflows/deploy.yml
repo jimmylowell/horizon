@@ -1,18 +1,17 @@
-name: Deploy to GitHub Pages
+name: Test and build
+
+# The site is on Cloudflare Pages (project `horizon`) since 2026-11-06.
+# This workflow only checks that a change installs, passes its tests and
+# builds; a merge goes live by `wrangler pages deploy dist --project-name horizon --branch main`.
 
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: true
 
 jobs:
   build:
@@ -26,17 +25,3 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
