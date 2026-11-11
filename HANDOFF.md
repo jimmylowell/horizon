@@ -31,6 +31,12 @@ from PR #1, which this branch supersedes). In short:
   side of E St, behind a building at 4:17; the Moonlight brewpub pin, no
   building in the way, ridge at 4:35. `npm test` (62) and `npm run build` pass.
 
+**Source link** (2026-11-10, branch `reckon/todo-4d67842b`): the credits line
+under *sources and how times are worked out* links the source on GitHub and
+says MIT; the repo has the `LICENSE`. **Not merged on purpose:** the repo is
+still private, so the link would 404 for a visitor. It merges and deploys
+once Jimmy says yes to making the repo public (a line in his queue).
+
 **Next:** Jimmy tries it in town this week: tap a few spots along F Street at
 sunset and say whether the building times match what he sees.
 
