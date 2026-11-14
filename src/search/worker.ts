@@ -9,6 +9,7 @@
 import { DEG, destination, type LatLon } from "../geo";
 import { horizonFan, horizonRing, marchHorizon, type ObstacleField } from "../elevation/horizon";
 import { LIDAR_CELL_M, LidarGrid, lidarTownAt } from "./lidar";
+import { bestSpots, scoreFaces, type HighSpot, type ScoredFace } from "./highspots";
 import {
   metersPerPixel,
   TILE_SIZE,
@@ -91,6 +92,34 @@ export interface SkylineRequest {
   lidarBase?: string;
 }
 
+/**
+ * High spots on building faces near the pin, at the slider's eye height
+ * (docs/design.md, *Eye height and high spots in town*). Baked towns only.
+ */
+export interface HighSpotsRequest {
+  type: "highSpots";
+  requestId: number;
+  point: LatLon;
+  /** Faces within this distance of the pin are scored. */
+  radiusM: number;
+  azimuthDeg: number;
+  spreadDeg: number;
+  maxDistM: number;
+  zoom: number;
+  eyeHeightM: number;
+  lidarBase: string;
+}
+
+export interface HighSpotsResult {
+  /** Footprints scored; null = Overpass failed, nothing scored. */
+  footprints: number | null;
+  /** The lidar loaded. */
+  lidar: boolean;
+  faces: ScoredFace[];
+  /** The best few, re-read with the same fan as From here. */
+  best: (HighSpot & { fanAngleDeg: number; streetAngleDeg: number })[];
+}
+
 export interface SkylineResult {
   /** Skyline angle above the flat horizon per bearing, degrees; NaN = unknown. */
   angles: number[];
@@ -113,6 +142,8 @@ export interface ProbeBuildings {
   source?: "osm" | "lidar";
   /** Height above the street of what blocks, metres (lidar only). */
   blockerHeightM?: number;
+  /** Lidar height above the ground under the pin itself, metres (lidar only). */
+  pinHeightM?: number;
 }
 
 export interface CandidateResult {
@@ -150,6 +181,7 @@ export type WorkerMessage =
     }
   | { type: "ringResult"; requestId: number; results: RingResult[] }
   | { type: "skylineResult"; requestId: number; result: SkylineResult }
+  | { type: "highSpotsResult"; requestId: number; result: HighSpotsResult }
   | {
       type: "probeResult";
       requestId: number;
@@ -225,13 +257,14 @@ function ringTiles(req: RingRequest): TileKey[] {
 
 const post = (m: WorkerMessage) => (self as unknown as Worker).postMessage(m);
 
-self.onmessage = async (e: MessageEvent<SearchRequest | RingRequest | ProbeRequest | SkylineRequest>) => {
+self.onmessage = async (e: MessageEvent<SearchRequest | RingRequest | ProbeRequest | SkylineRequest | HighSpotsRequest>) => {
   const req = e.data;
   try {
     if (req.type === "search") await handleSearch(req);
     else if (req.type === "ring") await handleRing(req);
     else if (req.type === "probe") await handleProbe(req);
     else if (req.type === "skyline") await handleSkyline(req);
+    else if (req.type === "highSpots") await handleHighSpots(req);
   } catch (err) {
     post({ type: "error", requestId: req.requestId, message: String(err) });
   }
@@ -441,6 +474,7 @@ async function handleLidarProbe(req: ProbeRequest, lidar: LidarGrid): Promise<vo
       footprint: null,
       source: "lidar",
       blockerHeightM: h > 0 ? h : undefined,
+      pinHeightM: lidar.sample(req.point.lat, req.point.lon),
     },
   });
 }
@@ -476,6 +510,69 @@ async function handleSkyline(req: SkylineRequest): Promise<void> {
     what.push(lidar && r.horizonDistM <= LIDAR_RANGE_M && lidar.sample(r.horizonLat, r.horizonLon) > 0 ? "lidar" : "terrain");
   }
   post({ type: "skylineResult", requestId: req.requestId, result: { angles, what, distM, lidar: !!lidar } });
+}
+
+let highGrid: { box: Box; grid: Promise<BuildingGrid | null> } | null = null;
+
+async function handleHighSpots(req: HighSpotsRequest): Promise<void> {
+  const dLat = req.radiusM / 111_320;
+  const dLon = req.radiusM / (111_320 * Math.cos(req.point.lat * DEG));
+  const need: Box = { s: req.point.lat - dLat, n: req.point.lat + dLat, w: req.point.lon - dLon, e: req.point.lon + dLon };
+  if (!highGrid || !boxContains(highGrid.box, need)) {
+    // Padded so a pin moved a short way reuses the outlines.
+    const box: Box = {
+      s: req.point.lat - dLat * 1.5,
+      n: req.point.lat + dLat * 1.5,
+      w: req.point.lon - dLon * 1.5,
+      e: req.point.lon + dLon * 1.5,
+    };
+    const grid = fetchBuildingsBox(box);
+    highGrid = { box, grid };
+    void grid.then((g) => {
+      if (!g && highGrid?.grid === grid) highGrid = null;
+    });
+  }
+  const [grid, lidar] = await Promise.all([
+    highGrid.grid,
+    lidarFor(req.point, req.lidarBase),
+    cache.fetchTiles(corridorTiles({ ...req, origin: req.point, radiusM: req.radiusM })),
+  ]);
+  if (!grid || !lidar) {
+    post({
+      type: "highSpotsResult",
+      requestId: req.requestId,
+      result: { footprints: grid ? 0 : null, lidar: !!lidar, faces: [], best: [] },
+    });
+    return;
+  }
+  const sample = (lat: number, lon: number) => cache.sampleElevation(lat, lon, req.zoom);
+  const opts = (eye: number) => ({
+    maxDistM: req.maxDistM,
+    startStepM: Math.max(40, metersPerPixel(req.point.lat, req.zoom)),
+    eyeHeightM: eye,
+    obstacles: lidarField(lidar),
+  });
+  const eyeOpts = opts(req.eyeHeightM);
+  const inRange = grid.footprints.filter((f) =>
+    f.ring.some((p) => p.lat >= need.s && p.lat <= need.n && p.lon >= need.w && p.lon <= need.e)
+  );
+  const { faces, spots } = scoreFaces(inRange, req.azimuthDeg, req.eyeHeightM, lidar.sample, (p) => {
+    const r = marchHorizon(sample, p.lat, p.lon, req.azimuthDeg, eyeOpts);
+    return r.noData ? NaN : r.maxAngleDeg;
+  });
+  // Re-read the leaders with the same fan as the From here reading, then
+  // keep the best three; the street reading at the same spot is the comparison.
+  const leaders = bestSpots(spots, 12).map((s) => {
+    const fan = horizonFan(sample, s.point.lat, s.point.lon, req.azimuthDeg, req.spreadDeg, eyeOpts);
+    const street = horizonFan(sample, s.point.lat, s.point.lon, req.azimuthDeg, req.spreadDeg, opts(2));
+    return { ...s, fanAngleDeg: fan.maxAngleDeg, streetAngleDeg: street.maxAngleDeg };
+  });
+  leaders.sort((x, y) => x.fanAngleDeg - y.fanAngleDeg);
+  post({
+    type: "highSpotsResult",
+    requestId: req.requestId,
+    result: { footprints: inRange.length, lidar: true, faces, best: leaders.slice(0, 3) },
+  });
 }
 
 async function handleRing(req: RingRequest): Promise<void> {

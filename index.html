@@ -23,7 +23,13 @@
 
     <section id="panel">
       <div id="here" hidden></div>
+      <label id="eye-row" hidden>
+        <span>Eye</span>
+        <input id="eye" type="range" min="6.5" max="20" step="0.5" value="6.5" aria-label="Eye height above the street, feet" />
+        <output id="eye-out">standing</output>
+      </label>
       <div id="strip" hidden></div>
+      <div id="high" hidden></div>
       <div id="facing-row">
         <div id="facing" role="group" aria-label="Which sky">
           <button data-facing="sun" class="active" title="The sun itself, and when it goes behind the ridge or a building">Sun</button>

@@ -46,6 +46,7 @@ import type {
   RingRequest,
   SearchRequest,
   SkylineRequest,
+  HighSpotsRequest,
   WorkerMessage,
 } from "./search/worker";
 import { lidarTownAt } from "./search/lidar";
@@ -67,6 +68,23 @@ interface State {
   facing: "sun" | "away";
   /** A Find spots search is showing; the permalink then reruns it (`,find`). */
   found: boolean;
+  /**
+   * Eye height above the street, feet, from the slider (docs/design.md, *Eye
+   * height and high spots in town*). The bottom stop, 6.5, is standing: the
+   * 2 m the page has always used. The top, 20 ft, is Jimmy's number.
+   */
+  eyeFt: number;
+}
+
+const EYE_MIN_FT = 6.5;
+const EYE_MAX_FT = 20;
+const FT_M = 0.3048;
+/** The eye's height above the ground at the pin, metres. */
+function eyeM(): number {
+  return state.eyeFt <= EYE_MIN_FT ? 2 : state.eyeFt * FT_M;
+}
+function eyeLabel(): string {
+  return state.eyeFt <= EYE_MIN_FT ? "standing (2 m)" : `${state.eyeFt} ft (${(state.eyeFt * FT_M).toFixed(1)} m)`;
 }
 
 const MODE_DEFAULT_KM: Record<TravelMode, number> = { walk: 2, bike: 8, drive: 25 };
@@ -82,6 +100,7 @@ const state: State = {
   searching: false,
   facing: "sun",
   found: false,
+  eyeFt: EYE_MIN_FT,
 };
 
 /** True when the search looks at the sky opposite the sun (src/search/away.ts). */
@@ -109,7 +128,7 @@ function baseTime(): Date {
   return new Date(y, m - 1, d, 0, 0, 0);
 }
 
-// Permalink: #lat,lon,kind,mode,radius[,date][,away][,find]
+// Permalink: #lat,lon,kind,mode,radius[,date][,away][,find][,eye=<ft>]
 /** True when the page opened on a shared/bookmarked permalink (auto-searches). */
 let openedFromHash = false;
 function readHash(): void {
@@ -128,6 +147,8 @@ function readHash(): void {
     if (m[5] && /^\d{4}-\d{2}-\d{2}$/.test(m[5])) state.date = m[5];
     if (m.slice(5).includes("away")) state.facing = "away";
     if (m.slice(5).includes("find")) state.found = true;
+    const eye = m.slice(5).map((x) => /^eye=(\d+(?:\.\d+)?)$/.exec(x)).find((x) => x);
+    if (eye) state.eyeFt = Math.min(EYE_MAX_FT, Math.max(EYE_MIN_FT, Math.round(parseFloat(eye[1]) * 2) / 2));
   }
 }
 function writeHash(): void {
@@ -135,7 +156,7 @@ function writeHash(): void {
   history.replaceState(
     null,
     "",
-    `#${state.loc.lat.toFixed(5)},${state.loc.lon.toFixed(5)},${state.kind},${state.mode},${state.radiusKm}${date}${facingAway() ? ",away" : ""}${state.found ? ",find" : ""}`
+    `#${state.loc.lat.toFixed(5)},${state.loc.lon.toFixed(5)},${state.kind},${state.mode},${state.radiusKm}${date}${facingAway() ? ",away" : ""}${state.found ? ",find" : ""}${state.eyeFt > EYE_MIN_FT ? `,eye=${state.eyeFt}` : ""}`
   );
 }
 
@@ -511,6 +532,10 @@ function drawHereBuilding(ring: LatLon[] | null): void {
 
 const eventsNav = document.getElementById("events")!;
 const hereEl = document.getElementById("here")!;
+const eyeRow = document.getElementById("eye-row")!;
+const eyeInput = document.getElementById("eye") as HTMLInputElement;
+const eyeOut = document.getElementById("eye-out")!;
+const highEl = document.getElementById("high")!;
 const resultsEl = document.getElementById("results")!;
 const statusEl = document.getElementById("status")!;
 const goBtn = document.getElementById("go") as HTMLButtonElement;
@@ -741,7 +766,7 @@ const LIDAR_BASE = new URL(
 ).href;
 
 function askWorker<R extends WorkerMessage>(
-  req: SearchRequest | RingRequest | ProbeRequest | SkylineRequest,
+  req: SearchRequest | RingRequest | ProbeRequest | SkylineRequest | HighSpotsRequest,
   onProgress: (phase: ProgressPhase, done: number, total: number) => void
 ): Promise<R> {
   return new Promise((resolve, reject) => {
@@ -820,6 +845,9 @@ async function doProbeHere(): Promise<void> {
   const ev = state.events[state.kind];
   here = null;
   if (!ev) stripEl.hidden = true;
+  eyeRow.hidden = !ev;
+  highEl.hidden = true;
+  drawHighFaces([]);
   clearSightline("here-sightline");
   drawHereBuilding(null);
   if (!ev) {
@@ -839,7 +867,7 @@ async function doProbeHere(): Promise<void> {
       spreadDeg: lookSpread(),
       maxDistM: RAY_REACH_M,
       zoom: PROBE_ZOOM,
-      eyeHeightM: 2,
+      eyeHeightM: eyeM(),
     };
     const reply = await askWorker<ProbeReply>(req, () => {});
     if (hereRequest !== id) return; // superseded by a newer pin/event
@@ -865,6 +893,7 @@ async function doProbeHere(): Promise<void> {
     // *In town: footprints first*).
     void probeHereBuildings(id, req, ev);
     void probeStrip(id, loc, ev);
+    void probeHigh(id, loc, ev);
   } catch (err) {
     console.error(err);
     if (hereRequest === id) renderHere("Terrain data unavailable right now.");
@@ -966,7 +995,7 @@ async function probeStrip(id: number, loc: LatLon, ev: SkyEvent): Promise<void> 
         azimuths,
         maxDistM: RAY_REACH_M,
         zoom: PROBE_ZOOM,
-        eyeHeightM: 2,
+        eyeHeightM: eyeM(),
         lidarBase: LIDAR_BASE,
       },
       () => {}
@@ -1086,7 +1115,148 @@ function renderHere(note?: string): void {
   }
   hereEl.innerHTML = `<div class="here-main g${grade}"></div><div class="here-sub"></div>`;
   hereEl.querySelector(".here-main")!.textContent = main;
-  hereEl.querySelector(".here-sub")!.textContent = `${facts}${ridge}${behind}${bnote}${golden}`;
+  let eyeNote = "";
+  if (state.eyeFt > EYE_MIN_FT) {
+    eyeNote = ` · eye ${state.eyeFt} ft up`;
+    const pinH = here.buildings?.pinHeightM ?? 0;
+    // The slider is height above the ground; on a roof or in a tree the eye
+    // may be inside what the flight measured, or above it.
+    if (pinH > 1 && pinH >= eyeM()) eyeNote += `, inside something ${Math.round(pinH)} m tall on the lidar: move the pin beside the wall`;
+    else if (pinH > 1) eyeNote += `, above the ${Math.round(pinH)} m roof or tree the pin is on`;
+  }
+  hereEl.querySelector(".here-sub")!.textContent = `${facts}${ridge}${behind}${bnote}${eyeNote}${golden}`;
+}
+
+// ---------- eye height and high spots (docs/design.md) ----------
+
+eyeInput.min = String(EYE_MIN_FT);
+eyeInput.max = String(EYE_MAX_FT);
+eyeInput.value = String(state.eyeFt);
+eyeOut.textContent = eyeLabel();
+let eyeTimer = 0;
+eyeInput.addEventListener("input", () => {
+  state.eyeFt = parseFloat(eyeInput.value);
+  eyeOut.textContent = eyeLabel();
+  writeHash();
+  clearTimeout(eyeTimer);
+  eyeTimer = window.setTimeout(() => void probeHere(), 350);
+});
+
+/** Faces within this distance of the pin are scored: about five blocks each way. */
+const HIGH_RADIUS_M = 400;
+/**
+ * Where the face colours break, in degrees above the best face found: in
+ * Salida the ridge alone stands about 4° up, so fixed angles would paint
+ * every face one colour. Each break is shown as the time the sun meets it.
+ */
+const HIGH_STEPS_DEG = [0.2, 0.5, 1, 2];
+const HIGH_COLOURS = ["#2f7de1", "#7fb2f0", "#b8b8b8", "#f0a040", "#d9443a"];
+type HighReply = Extract<WorkerMessage, { type: "highSpotsResult" }>;
+
+function highBin(angleDeg: number, breaksDeg: number[]): number {
+  const i = breaksDeg.findIndex((b) => angleDeg < b);
+  return i === -1 ? breaksDeg.length : i;
+}
+
+function drawHighFaces(faces: { a: LatLon; b: LatLon; bin: number }[]): void {
+  if (!mapReady) return;
+  const data: FeatureCollection = {
+    type: "FeatureCollection",
+    features: faces.map((f) => ({
+      type: "Feature",
+      properties: { bin: f.bin },
+      geometry: { type: "LineString", coordinates: [[f.a.lon, f.a.lat], [f.b.lon, f.b.lat]] },
+    })),
+  };
+  const src = map.getSource("high-faces") as maplibregl.GeoJSONSource | undefined;
+  if (src) {
+    src.setData(data);
+    return;
+  }
+  map.addSource("high-faces", { type: "geojson", data });
+  map.addLayer({
+    id: "high-faces-line",
+    type: "line",
+    source: "high-faces",
+    paint: {
+      "line-width": ["interpolate", ["linear"], ["zoom"], 14, 2, 18, 6],
+      "line-color": ["match", ["get", "bin"], 0, HIGH_COLOURS[0], 1, HIGH_COLOURS[1], 2, HIGH_COLOURS[2], 3, HIGH_COLOURS[3], HIGH_COLOURS[4]],
+    },
+  });
+}
+
+async function probeHigh(id: number, loc: LatLon, ev: SkyEvent): Promise<void> {
+  if (!lidarTownAt(loc) || state.eyeFt <= EYE_MIN_FT || facingAway()) return;
+  const eyeFt = state.eyeFt;
+  highEl.hidden = false;
+  highEl.innerHTML = `<div class="high-note">Scoring building faces within ${HIGH_RADIUS_M} m at ${eyeFt} ft…</div>`;
+  let reply: HighReply;
+  try {
+    reply = await askWorker<HighReply>(
+      {
+        type: "highSpots",
+        requestId: ++requestId,
+        point: loc,
+        radiusM: HIGH_RADIUS_M,
+        azimuthDeg: ev.azimuthDeg,
+        spreadDeg: lookSpread(),
+        maxDistM: RAY_REACH_M,
+        zoom: PROBE_ZOOM,
+        eyeHeightM: eyeM(),
+        lidarBase: LIDAR_BASE,
+      },
+      () => {}
+    );
+  } catch (err) {
+    console.error(err);
+    if (hereRequest === id) highEl.hidden = true;
+    return;
+  }
+  if (hereRequest !== id) return;
+  const r = reply.result;
+  if (r.footprints === null || !r.lidar) {
+    highEl.innerHTML = `<div class="high-note">${r.lidar ? "Building outlines didn't load from OpenStreetMap" : "The lidar didn't load"}: high spots not scored. Move the pin to try again.</div>`;
+    return;
+  }
+  const rising = ev.kind.endsWith("rise");
+  const timeAt = (deg: number) => obstructionEffect(ev.kind, loc.lat, loc.lon, ev.time, deg).time ?? ev.time;
+  const floorDeg = r.faces.reduce((m, f) => Math.min(m, f.angleDeg), Infinity);
+  const breaksDeg = Number.isFinite(floorDeg) ? HIGH_STEPS_DEG.map((d) => floorDeg + d) : [];
+  const breaks = breaksDeg.map((d) => timeFmt.format(timeAt(d)));
+  if (!mapReady) await new Promise<void>((resolve) => map.once("load", () => resolve()));
+  if (hereRequest !== id) return;
+  drawHighFaces(r.faces.map((f) => ({ a: f.a, b: f.b, bin: highBin(f.angleDeg, breaksDeg) })));
+  // The faces are only readable a few blocks across: bring the map in to them.
+  if (r.faces.length && map.getZoom() < 15) map.easeTo({ center: [loc.lon, loc.lat], zoom: 15.5 });
+  const key = (breaks.length ? HIGH_COLOURS : []).map((c, i) => {
+    const label = i === 0 ? `${rising ? "by" : "after"} ${breaks[0]}` : i < breaks.length ? breaks[i] : `${rising ? "after" : "before"} ${breaks[breaks.length - 1]}`;
+    return `<span style="background:${c}"></span>${label}`;
+  }).join("");
+  const word = rising ? "sun from" : "sun until";
+  const cards = r.best.map((s, i) => {
+    const t = timeAt(s.fanAngleDeg);
+    const street = timeAt(s.streetAngleDeg);
+    const gain = Math.round(((rising ? -1 : 1) * (t.getTime() - street.getTime())) / 60_000);
+    const gainText = gain > 0 ? `+${gain} min over standing at its foot` : gain < 0 ? `${gain} min vs standing at its foot` : "same as standing at its foot";
+    const name = s.label ?? "a building";
+    const face = s.facing.charAt(0).toUpperCase() + s.facing.slice(1);
+    return `<button class="high-spot" data-i="${i}">${face} face of ${escapeHtml(name)}, ${eyeFt} ft up: ${word} ~${timeFmt.format(t)}, ${gainText} <span class="high-note">· wall ${Math.round(s.wallHeightM)} m on the lidar</span></button>`;
+  });
+  highEl.innerHTML =
+    `<div class="high-note"><b>High spots at ${eyeFt} ft</b>, building faces within ${HIGH_RADIUS_M} m: ${r.faces.length} faces reach that height, on ${r.footprints} buildings nearby.</div>` +
+    (cards.length ? cards.join("") : `<div class="high-note">No face here has a wall that tall on the lidar.</div>`) +
+    `<div class="high-note high-key">${key}</div>` +
+    `<div class="high-note">A spot beside the wall at that height, from USGS lidar heights and OpenStreetMap outlines. Not a balcony: nothing here records balconies, windows or whether anyone can stand there. Map colours read the event's bearing alone; the cards read the same fan as From here.</div>`;
+  highEl.querySelectorAll<HTMLButtonElement>("button.high-spot").forEach((b) => {
+    b.addEventListener("click", () => {
+      const s = r.best[Number(b.dataset.i)];
+      setLocation(s.point, true);
+    });
+  });
+}
+
+function escapeHtml(t: string): string {
+  return t.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
 // ---------- find spots ----------

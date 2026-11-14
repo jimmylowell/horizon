@@ -105,6 +105,21 @@ Not done: tiles in R2 (the run that built this could not run `wrangler`); tellin
 
 Sources: USGS 3D Elevation Program, lidar point cloud CO_SanLuisJuanMiguel_2020_D20 (catalog via the [TNM Access API](https://tnmaccess.nationalmap.gov/api/v1/docs)), and USGS 1 m DEM tile `USGS_1M_13_x41y427_CO_SanLuisJuanMiguel_2020_D20` ([ScienceBase item 6217206a…](https://www.sciencebase.gov/catalog/item/6217206ad34ec739b2dbf592)); the Entwine copy is listed on the [AWS Open Data registry](https://registry.opendata.aws/usgs-lidar/).
 
+## Eye height and high spots in town
+
+Jimmy, 2026-11-14: "Slider only works"; the question it answers is "best balcony in town"; floors dropped for now; and on its top, "make it 20 feet max". It builds on *Lidar in town*: the heights come from the flight, not from OpenStreetMap tags.
+
+1. **One slider: how high the eye is.** Under the *From here* line, from standing (2 m, the height the page uses everywhere else) to 20 ft (6.1 m), in half-foot steps, read in feet with metres beside them. It measures height above the ground at the pin. Nothing records floor heights, so it never says "second floor". The permalink carries it as `,eye=<ft>`; absent means standing, so every older link opens the same.
+2. **From here and the skyline strip use it.** Both march from the slider's height. A higher eye lowers every obstruction near the pin. In Salida the line also says what the lidar has under the pin: above a roof or tree lower than the eye, or inside one taller than it, with a hint to move the pin beside the wall. *Find spots* stays at standing height.
+3. **In Salida, building faces are coloured by how late the sun stays at that height.** Inside the baked lidar area and within 400 m of the pin, every OpenStreetMap footprint edge whose outward side looks within 90° of the event is sampled every 4 m, 1.5 m outside the wall, at the slider's height. A sample counts only where the lidar 1.5 m inside the wall reaches the eye, so the spot is beside a measured wall, not in the air. Each sample marches the lidar and terrain toward the event (`src/search/highspots.ts`); a face takes its best sample. The colours break at skyline angles of 1°, 2°, 3° and 5°, and the key shows each break as the time the sun meets it, by the page's one sun definition. Shown only above standing height and only toward the sun or moon, not *Away*.
+4. **The best three are listed.** Re-read with the same ±8° fan as *From here*, no two within 40 m: "West face of *name* (OSM `name`, else house number and street, else *a building*), 15 ft up: sun until ~4:41, +12 min over the street here", the street figure being the same spot at standing height. Tapping one moves the pin there. **It names a spot on a building's face, never a balcony**, and says so: no source here records balconies, windows or whether anyone can stand there.
+
+Not done: floors or floor heights; balconies, windows or roof access; telling roofs from trees, which the flight does not record (a footprint's wall height is read from the lidar just inside it, so an overhanging tree there counts as wall); anywhere outside the baked area; scoring the whole town at once, which would ask Overpass for the town's every footprint (a 6 km square was 5.7 MB and 38 s, measured in `src/search/buildings.ts`).
+
+Sources: heights from the USGS flight in *Lidar in town*; footprints, names and addresses from OpenStreetMap contributors, ODbL. The 2 m standing eye, the 400 m reach, the 4 m and 1.5 m spacings and the colour breaks are choices, not sourced numbers. The 20 ft top is Jimmy's.
+
+How Jimmy will know it is right: from a window or a deck he knows in Salida, with the slider at that height, the *From here* time matches when the sun actually goes, to within a few minutes, and the top card names a face he would agree is a good spot.
+
 ## How Jimmy will know it is right
 
 Standing somewhere he knows around Salida, the "from here" time matches when the sun actually drops behind the ridge, to within a few minutes.
