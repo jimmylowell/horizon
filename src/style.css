@@ -281,6 +281,36 @@ body {
 #strip .k { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: -1px; margin: 0 3px 0 0; }
 #strip .k.ridge { background: #1b2230; }
 #strip .k.lidar { background: #33503d; margin-left: 6px; }
+/* Eye-height slider: one row under the reading. */
+#eye-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 6px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+#eye-row[hidden] { display: none; }
+#eye-row input { flex: 1; min-width: 0; }
+#eye-row output { min-width: 7.5em; text-align: right; font-variant-numeric: tabular-nums; }
+/* High spots on building faces (Salida). */
+#high { padding: 0 12px 8px; font-size: 12px; }
+#high[hidden] { display: none; }
+#high .high-note { color: var(--text-2); margin: 2px 0; }
+#high button.high-spot {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin: 4px 0;
+  padding: 6px 8px;
+  border: 1px solid #8884;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+#high .high-key span { display: inline-block; width: 14px; height: 4px; vertical-align: 2px; margin: 0 3px 0 6px; }
 .g4 { color: var(--grade4); }
 .g3 { color: var(--grade3); }
 .g2 { color: var(--text-2); }

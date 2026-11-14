@@ -11,6 +11,7 @@
 
 import type { LatLon } from "../geo";
 import { overpassJson } from "./overpass";
+import type { Footprint } from "./highspots";
 
 /** Beyond this ray distance a one-story building subtends ~0.1° — ignore. */
 export const BUILDING_RANGE_M = 2000;
@@ -30,6 +31,15 @@ export interface BuildingGrid {
   sample: (lat: number, lon: number) => number;
   /** The footprint (outer ring, lat/lon) at or within one cell of a point, if any. */
   footprintAt: (lat: number, lon: number) => LatLon[] | null;
+  /** Every footprint rasterized, with its OSM name or address. */
+  footprints: Footprint[];
+}
+
+/** OSM `name`, else house number and street; null when the way has neither. */
+export function footprintLabel(tags: Record<string, string>): string | null {
+  if (tags.name) return tags.name;
+  if (tags["addr:housenumber"] && tags["addr:street"]) return `${tags["addr:housenumber"]} ${tags["addr:street"]}`;
+  return null;
 }
 
 interface OverpassWay {
@@ -68,7 +78,7 @@ export function buildGrid(
   };
 
   let count = 0;
-  const kept: { xs: number[]; ys: number[]; geom: { lat: number; lon: number }[] }[] = [];
+  const kept: { xs: number[]; ys: number[]; geom: { lat: number; lon: number }[]; label: string | null }[] = [];
   for (const way of ways) {
     const geom = way.geometry;
     if (way.type !== "way" || !geom || geom.length < 3) continue;
@@ -105,7 +115,7 @@ export function buildGrid(
         stamp(Math.floor(xs[i] + t * (xs[j] - xs[i])), Math.floor(ys[i] + t * (ys[j] - ys[i])), h);
       }
     }
-    kept.push({ xs, ys, geom });
+    kept.push({ xs, ys, geom, label: footprintLabel(way.tags ?? {}) });
     count++;
   }
 
@@ -120,6 +130,7 @@ export function buildGrid(
   return {
     cellM,
     count,
+    footprints: kept.map((k) => ({ ring: k.geom.map((p) => ({ lat: p.lat, lon: p.lon })), label: k.label })),
     sample: (lat, lon) => {
       const c = Math.floor(toCol(lon));
       const r = Math.floor(toRow(lat));
