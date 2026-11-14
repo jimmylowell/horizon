@@ -104,6 +104,25 @@ export function azimuthAtTime(kind: EventKind, lat: number, lon: number, when: D
   return azimuthAt(bodyOf(kind), new AstroTime(when), new Observer(lat, lon, 0));
 }
 
+/**
+ * Where the disc is at an instant, as seen through the air: azimuth, and the
+ * apparent altitude of its centre and its radius (degrees). The skyline strip
+ * draws the path from these; the disc's top edge is `altDeg + radiusDeg`.
+ */
+export function bodyPosition(
+  kind: EventKind,
+  lat: number,
+  lon: number,
+  when: Date
+): { azDeg: number; altDeg: number; radiusDeg: number } {
+  const body = bodyOf(kind);
+  const time = new AstroTime(when);
+  const obs = new Observer(lat, lon, 0);
+  const eq = Equator(body, time, obs, true, true);
+  const hor = Horizon(time, obs, eq.ra, eq.dec, "normal");
+  return { azDeg: hor.azimuth, altDeg: hor.altitude, radiusDeg: semidiameterDeg(kind, lat, lon, when) };
+}
+
 /** Event time recomputed at a specific spot (differs slightly by location). */
 export function eventTimeAt(kind: EventKind, lat: number, lon: number, near: Date): Date | null {
   const obs = new Observer(lat, lon, 0);

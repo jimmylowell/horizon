@@ -256,6 +256,31 @@ body {
   line-height: 1.5;
   margin-top: 2px;
 }
+/* Skyline strip: ridge, roofs and trees, and the sun's or moon's path over them. */
+#strip {
+  padding: 0 12px 8px;
+}
+#strip[hidden] {
+  display: none;
+}
+#strip svg {
+  display: block;
+  background: linear-gradient(#24314d, #3d4f73);
+  border-radius: 6px;
+}
+#strip .ridge { fill: #1b2230; }
+#strip .lidar { fill: #33503d; }
+#strip .unknown { fill: #555; opacity: 0.5; }
+#strip .flat { stroke: #ffffff55; stroke-dasharray: 3 3; }
+#strip .path { fill: none; stroke-width: 1.5; }
+#strip .now { fill: none; stroke: #fff; stroke-width: 1.5; }
+#strip text { font: 10px system-ui, sans-serif; fill: #e8ecf4; }
+#strip text.meet { font-weight: 700; font-size: 12px; }
+#strip text.bearing { fill: #c0c8d8; }
+#strip .strip-note { font-size: 11px; color: var(--text-2); margin-top: 3px; }
+#strip .k { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: -1px; margin: 0 3px 0 0; }
+#strip .k.ridge { background: #1b2230; }
+#strip .k.lidar { background: #33503d; margin-left: 6px; }
 .g4 { color: var(--grade4); }
 .g3 { color: var(--grade3); }
 .g2 { color: var(--text-2); }

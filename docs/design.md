@@ -23,7 +23,7 @@ Someone outside on a nice evening asking "where should I go right now to watch i
 - No backend, no account, no API key: everything runs in the browser against public services.
 - No weather or cloud forecast; it answers "can I see the horizon", not "will it be clear".
 - No routing; each spot has a *Directions* link out to Google Maps.
-- No promise about trees: the elevation model is a surface model, so a spot inside forest is penalized and flagged by `data/landcover-rules.json`, not modelled.
+- No promise about trees outside Salida: the elevation model is a surface model, so a spot inside forest is penalized and flagged by `data/landcover-rules.json`, not modelled. In Salida the lidar measures them (*Lidar in town*).
 - Buildings only at town scale (radius ≤ 8 km), and bluntly: tagged height, else levels × 3 m, else one storey of about 4 m (`src/search/buildings.ts`).
 - Motorways and trunk roads are not candidates; private roads are skipped (`src/search/roads.ts`).
 
@@ -61,6 +61,7 @@ All fetched live by the browser; nothing is baked into the repo except the three
 |---|---|---|---|---|
 | Terrain Tiles, Mapzen / AWS Open Data, [registry.opendata.aws/terrain-tiles](https://registry.opendata.aws/terrain-tiles/), composited from SRTM, USGS 3DEP, GMTED, ETOPO1 and others (attribution per the registry page) | Terrarium-encoded elevation PNGs | `s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png` (`src/elevation/tiles.ts`); optional local cache from `scripts/fetch-terrain.mjs` | A surface model: tree canopy and roofs read as ground. README calls it ~30 m global; not checked here against the registry page | Unit tests in `src/elevation/horizon.test.ts` check the decoding and the march, not the data |
 | OpenStreetMap contributors, [openstreetmap.org/copyright](https://www.openstreetmap.org/copyright), ODbL | Roads, points of interest, building footprints, skyline names | [Overpass API](https://wiki.openstreetmap.org/wiki/Overpass_API), three public mirrors in turn (`src/search/overpass.ts`) | Coverage varies; most buildings carry no height. If Overpass is down, grid cells stand in, flagged "access unverified" | `src/search/roads.test.ts`, `buildings.test.ts` |
+| USGS 3D Elevation Program: lidar point cloud CO_SanLuisJuanMiguel_2020_D20 and its 1 m bare-ground model, [ScienceBase 608cc5ed…](https://www.sciencebase.gov/catalog/item/608cc5edd34e93746a6fe435), [6217206a…](https://www.sciencebase.gov/catalog/item/6217206ad34ec739b2dbf592) | Height above ground of the highest first return, Salida only | Baked once by `scripts/lidar/`, shipped as `lidar/salida/*.png` | Flown 2019 or 2020 (sources disagree); buildings and trees unlabelled; trees solid | Ground points vs ground model, median gap 0.00 m |
 | [astronomy-engine](https://github.com/cosinekitty/astronomy), Don Cross, MIT | Rise and set times and azimuths for sun and moon | npm package, runs offline in the browser (`src/astro.ts`) | — | Not checked against a published almanac in this repo |
 | [OpenFreeMap](https://openfreemap.org/), OSM data | Basemap tiles and the landcover layer the forest check reads | `tiles.openfreemap.org/styles/liberty` | — | — |
 | [MapLibre GL JS](https://maplibre.org/), BSD-3-Clause | The map | npm package | — | — |
@@ -82,6 +83,27 @@ What changes:
 Not done: drawing every footprint (the basemap already draws buildings from zoom 13, OpenFreeMap *Liberty* layer `building`); a 3D view; trees, which no open source maps by height here.
 
 Sources: building footprints and tags, OpenStreetMap contributors, ODbL, via the [Overpass API](https://wiki.openstreetmap.org/wiki/Overpass_API); the one-storey default is a choice, not a sourced number, and the code says so.
+
+## Lidar in town (2026-11-14)
+
+Jimmy, in a session on 2026-11-14: "The Horizon app needs to use LiDAR to be anything useful"; "I like the idea on the skyline strip"; on the street: "maybe I need to walk around, and I've seen some really great sunsets just randomly down the street".
+
+What changes:
+
+1. **Salida is baked once.** `scripts/lidar/fetch.mjs` takes the USGS 1 m bare-ground model and the catalog listing; `scripts/lidar/bake.mjs` reads the point cloud of USGS lidar project CO_SanLuisJuanMiguel_2020_D20 over the bbox −106.01, 38.52, −105.98, 38.54 and writes six 0.01° tiles (1.1 m cells, 2.3 MB in all): height above the bare ground of the highest first return, in quarter metres. The points come from USGS's Entwine copy of the flight on AWS (`usgs-lidar-public/CO_SanLuisJuanMiguel_2_2020`), because rockyweb.usgs.gov, the LAZ files' only host, answered 429 to a script. Noise (classes 7, 18) and wires (13, 14) are dropped: a wire would fill a whole 1 m cell. The tiles ship beside the page as `lidar/salida/`; `VITE_LIDAR_BASE` points the page at another address (R2) instead.
+2. **From here marches the lidar in Salida.** Inside the baked area the pin's reading marches the measured surface 1.5 km out at 1.1 m steps, on top of the terrain, instead of OpenStreetMap footprints with guessed heights. A blocker is "a roof or tree", with its measured height and distance. Everywhere else the reading is as before. If the tiles fail to load, the footprints stand in.
+3. **The skyline strip.** Under the reading, the skyline from the pin across 50° of bearings (101 rays), centred between the event's bearing and where the path is 4° up, since behind a near roof the sun goes in early and further round. Ridge in dark blue-grey, lidar in green. Over it the sun's or moon's path from two hours before a set (or to two hours after a rise), a dot every ten minutes, a time every half hour, and the disc drawn at the moment its top edge meets the skyline, by the same definition as the reading. A ring marks now when now is on the path. Drawn at the panel's real width, 96 px tall, for 390 px phones.
+4. **The pin follows him.** The locate button now tracks: each new fix more than 5 m from the pin moves it, and the reading and the strip with it.
+
+What the data cannot know, said on the page: anything built, cut down or grown since the flight; trees count as solid; nothing is labelled roof or tree, because **the flight does not classify buildings or vegetation**: over downtown its points are class 1 (unclassified, 11,296,712), 2 (ground, 21,104,771), 7 (low noise, 29), 9 (water, 111,664), 17 (bridge deck, 5,903), 18 (high noise, 2) and 20 (7,694), counted by `bake.mjs`. No floors or balconies: no dataset here records them.
+
+The flight's dates disagree. The USGS catalog record for the point-cloud tiles ([ScienceBase item 608cc5ed…](https://www.sciencebase.gov/catalog/item/608cc5edd34e93746a6fe435)) gives start 2019-09-21, end 2019-10-19. The points' own GPS times over downtown, read by `bake.mjs`, span 2020-09-21 to 2020-09-29. Unknown which is right; the page says both.
+
+Checked: the flight's ground points against the 1 m ground model, median gap 0.00 m (10th–90th percentile −0.05 to 0.05 m) over 42,100 cells, so the two share a vertical datum and no shift is applied.
+
+Not done: tiles in R2 (the run that built this could not run `wrangler`); telling roofs from trees, which the flight does not record; another town, which is another bake.
+
+Sources: USGS 3D Elevation Program, lidar point cloud CO_SanLuisJuanMiguel_2020_D20 (catalog via the [TNM Access API](https://tnmaccess.nationalmap.gov/api/v1/docs)), and USGS 1 m DEM tile `USGS_1M_13_x41y427_CO_SanLuisJuanMiguel_2020_D20` ([ScienceBase item 6217206a…](https://www.sciencebase.gov/catalog/item/6217206ad34ec739b2dbf592)); the Entwine copy is listed on the [AWS Open Data registry](https://registry.opendata.aws/usgs-lidar/).
 
 ## How Jimmy will know it is right
 

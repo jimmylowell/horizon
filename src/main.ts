@@ -6,6 +6,7 @@ import "./style.css";
 import {
   EVENT_KINDS,
   azimuthAtTime,
+  bodyPosition,
   eventTimeAt,
   goldenHourSpan,
   nextEvents,
@@ -44,8 +45,11 @@ import type {
   ProbeRequest,
   RingRequest,
   SearchRequest,
+  SkylineRequest,
   WorkerMessage,
 } from "./search/worker";
+import { lidarTownAt } from "./search/lidar";
+import { renderSkylineStrip, stripAzimuths, type StripPath } from "./render/strip";
 
 // ---------- state ----------
 
@@ -153,10 +157,20 @@ map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-ri
 const geolocate = new GeolocateControl({
   positionOptions: { enableHighAccuracy: true },
   showUserLocation: true,
+  // Walking: the pin follows each new fix, and the readout and strip with it.
+  trackUserLocation: true,
 });
 map.addControl(geolocate, "top-right");
+let firstFix = true;
 geolocate.on("geolocate", (pos) => {
-  setLocation({ lat: pos.coords.latitude, lon: pos.coords.longitude }, true);
+  const loc = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+  // A fix a few metres off the last one is the GPS wandering, not a step.
+  if (!firstFix && flatDistanceM(loc, state.loc) < 5) return;
+  setLocation(loc, firstFix);
+  firstFix = false;
+});
+geolocate.on("trackuserlocationend", () => {
+  firstFix = true;
 });
 
 // Keep MapLibre's corner controls clear of the app chrome: the topbar's height
@@ -714,8 +728,20 @@ type ProgressPhase = Extract<WorkerMessage, { type: "progress" }>["phase"];
  * request or in the script itself) rejects rather than leaving the search
  * hanging with the button disabled.
  */
+type SkylineReply = Extract<WorkerMessage, { type: "skylineResult" }>;
+
+/**
+ * Where the baked lidar tiles are. They ship beside the page (`lidar/` in
+ * the deploy) unless VITE_LIDAR_BASE names another address, such as an R2
+ * bucket; resolved against the page so a demo under a sub-path works too.
+ */
+const LIDAR_BASE = new URL(
+  (import.meta as { env?: { VITE_LIDAR_BASE?: string } }).env?.VITE_LIDAR_BASE ?? "lidar/",
+  document.baseURI
+).href;
+
 function askWorker<R extends WorkerMessage>(
-  req: SearchRequest | RingRequest | ProbeRequest,
+  req: SearchRequest | RingRequest | ProbeRequest | SkylineRequest,
   onProgress: (phase: ProgressPhase, done: number, total: number) => void
 ): Promise<R> {
   return new Promise((resolve, reject) => {
@@ -793,6 +819,7 @@ function probeHere(): Promise<void> {
 async function doProbeHere(): Promise<void> {
   const ev = state.events[state.kind];
   here = null;
+  if (!ev) stripEl.hidden = true;
   clearSightline("here-sightline");
   drawHereBuilding(null);
   if (!ev) {
@@ -837,6 +864,7 @@ async function doProbeHere(): Promise<void> {
     // the pin too, and let that answer replace this one (docs/design.md,
     // *In town: footprints first*).
     void probeHereBuildings(id, req, ev);
+    void probeStrip(id, loc, ev);
   } catch (err) {
     console.error(err);
     if (hereRequest === id) renderHere("Terrain data unavailable right now.");
@@ -846,7 +874,10 @@ async function doProbeHere(): Promise<void> {
 async function probeHereBuildings(id: number, terrainReq: ProbeRequest, ev: SkyEvent): Promise<void> {
   let reply: ProbeReply | null = null;
   try {
-    reply = await askWorker<ProbeReply>({ ...terrainReq, requestId: ++requestId, buildings: true }, () => {});
+    reply = await askWorker<ProbeReply>(
+      { ...terrainReq, requestId: ++requestId, buildings: true, lidarBase: LIDAR_BASE },
+      () => {}
+    );
   } catch (err) {
     console.error(err);
   }
@@ -859,6 +890,18 @@ async function probeHereBuildings(id: number, terrainReq: ProbeRequest, ev: SkyE
     return;
   }
   here.buildings = b;
+  if (b.source === "lidar" && !b.blockedByBuilding) {
+    // The lidar reading is the whole answer, ridge included: take it.
+    const r = reply.result;
+    Object.assign(here, {
+      obstructionDeg: r.obstructionDeg,
+      horizonDistM: r.horizonDistM,
+      horizonLat: r.horizonLat,
+      horizonLon: r.horizonLon,
+      noData: r.noData,
+      effect: obstructionEffect(ev.kind, here.loc.lat, here.loc.lon, ev.time, r.obstructionDeg),
+    });
+  }
   if (b.blockedByBuilding) {
     const r = reply.result;
     Object.assign(here, {
@@ -878,6 +921,76 @@ async function probeHereBuildings(id: number, terrainReq: ProbeRequest, ev: SkyE
     if (map.getZoom() < 15) map.easeTo({ center: [here.loc.lon, here.loc.lat], zoom: 16 });
   }
   renderHere();
+}
+
+// ---------- skyline strip ----------
+
+const stripEl = document.getElementById("strip")!;
+const STRIP_H = 96;
+
+/** The sun's or moon's path around the event, every two minutes. */
+function eventPath(ev: SkyEvent, loc: LatLon): StripPath {
+  const rising = ev.kind.endsWith("rise");
+  const points = [];
+  // Setting: from 2 h before to 15 min after; rising, the mirror of that.
+  const from = rising ? -15 : -120;
+  const to = rising ? 120 : 15;
+  const t0 = Math.floor(ev.time.getTime() / 120_000) * 120_000;
+  for (let m = from; m <= to; m += 2) {
+    const time = new Date(t0 + m * 60_000);
+    const p = bodyPosition(ev.kind, loc.lat, loc.lon, time);
+    points.push({ time, azDeg: p.azDeg, altDeg: p.altDeg, radiusDeg: p.radiusDeg });
+  }
+  return { points, rising };
+}
+
+async function probeStrip(id: number, loc: LatLon, ev: SkyEvent): Promise<void> {
+  if (facingAway()) {
+    stripEl.hidden = true;
+    return;
+  }
+  const path = eventPath(ev, loc);
+  // Centre on the stretch of path near the skyline, not the flat-horizon
+  // bearing: behind a tall roof the sun goes in well before and south of it.
+  const high = path.points.reduce((b, p) => (Math.abs(p.altDeg - 4) < Math.abs(b.altDeg - 4) ? p : b));
+  const azimuths = stripAzimuths(ev.azimuthDeg + (((high.azDeg - ev.azimuthDeg + 540) % 360) - 180) / 2);
+  const inTown = !!lidarTownAt(loc);
+  stripEl.hidden = false;
+  stripEl.innerHTML = `<div class="strip-note">${inTown ? "Reading the skyline: ridge, roofs and trees…" : "Reading the skyline…"}</div>`;
+  try {
+    const reply = await askWorker<SkylineReply>(
+      {
+        type: "skyline",
+        requestId: ++requestId,
+        point: loc,
+        azimuths,
+        maxDistM: RAY_REACH_M,
+        zoom: PROBE_ZOOM,
+        eyeHeightM: 2,
+        lidarBase: LIDAR_BASE,
+      },
+      () => {}
+    );
+    if (hereRequest !== id) return;
+    const sky = { azimuths, angles: reply.result.angles, what: reply.result.what };
+    const W = Math.max(280, Math.round(stripEl.clientWidth || 360));
+    const svg = renderSkylineStrip(sky, path, {
+      width: W,
+      height: STRIP_H,
+      colour: ev.kind.startsWith("sun") ? "#f0a020" : "#9fb4ff",
+      fmt: (d) => timeFmt.format(d),
+      now: new Date(),
+    });
+    const caption = reply.result.lidar
+      ? `<span class="k ridge"></span>ridge <span class="k lidar"></span>roofs and trees, USGS lidar · dots every 10 min`
+      : inTown
+        ? `<span class="k ridge"></span>ridge · lidar didn't load, roofs and trees missing · dots every 10 min`
+        : `<span class="k ridge"></span>ridge · no roofs or trees outside Salida · dots every 10 min`;
+    stripEl.innerHTML = `${svg}<div class="strip-note">${caption}</div>`;
+  } catch (err) {
+    console.error(err);
+    if (hereRequest === id) stripEl.hidden = true;
+  }
 }
 
 async function nameHereSkyline(id: number, loc: LatLon, r: Omit<CandidateResult, "id">): Promise<void> {
@@ -919,7 +1032,10 @@ function renderHere(note?: string): void {
   const rising = state.kind.endsWith("rise");
   const { effect } = here;
   const building = !!here.buildings?.blockedByBuilding;
-  const what = building ? "a building" : "the ridge";
+  const lidar = here.buildings?.source === "lidar";
+  // The Salida flight labels nothing above the ground as roof or tree
+  // (docs/design.md, *Lidar in town*), so a lidar blocker is named as either.
+  const what = building ? (lidar ? "a roof or tree" : "a building") : "the ridge";
   let main: string;
   if (effect.time) {
     const az = Math.round(azimuthAtTime(state.kind, here.loc.lat, here.loc.lon, effect.time));
@@ -939,12 +1055,20 @@ function renderHere(note?: string): void {
     }).label;
   }
   const ridge = building
-    ? ` · a building ${Math.round(here.horizonDistM)} m away, ${formatAngle(here.obstructionDeg)}`
+    ? lidar
+      ? ` · ${Math.round(here.buildings!.blockerHeightM ?? 0)} m tall, ${Math.round(here.horizonDistM)} m away, ${formatAngle(here.obstructionDeg)}`
+      : ` · a building ${Math.round(here.horizonDistM)} m away, ${formatAngle(here.obstructionDeg)}`
     : hitTerrain(here)
       ? ` · ridge ${formatAngle(here.obstructionDeg)}, ${(here.horizonDistM / 1000).toFixed(0)} km away`
       : " · no terrain on the horizon";
   const bnote = here.buildingsPending
-    ? " · checking buildings…"
+    ? lidarTownAt(here.loc)
+      ? " · reading the USGS lidar…"
+      : " · checking buildings…"
+    : lidar
+      ? building
+        ? " · measured by USGS lidar"
+        : " · nothing in the way on the USGS lidar"
     : here.buildings && here.buildings.count === null
       ? " · buildings not checked (map data didn't load)"
       : here.buildings && !building && here.buildings.count

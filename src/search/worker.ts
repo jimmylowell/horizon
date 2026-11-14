@@ -7,7 +7,8 @@
  */
 
 import { DEG, destination, type LatLon } from "../geo";
-import { horizonFan, horizonRing, type ObstacleField } from "../elevation/horizon";
+import { horizonFan, horizonRing, marchHorizon, type ObstacleField } from "../elevation/horizon";
+import { LIDAR_CELL_M, LidarGrid, lidarTownAt } from "./lidar";
 import {
   metersPerPixel,
   TILE_SIZE,
@@ -70,6 +71,34 @@ export interface ProbeRequest {
   eyeHeightM: number;
   /** Also march OSM building footprints near the point (the town readout). */
   buildings?: boolean;
+  /**
+   * Where the baked lidar tiles are (absolute URL ending in /). Inside a
+   * baked town the readout marches them instead of the footprints.
+   */
+  lidarBase?: string;
+}
+
+/** The skyline strip: one ray per bearing across the bearings around the event. */
+export interface SkylineRequest {
+  type: "skyline";
+  requestId: number;
+  point: LatLon;
+  /** Bearings marched, degrees clockwise from north. */
+  azimuths: number[];
+  maxDistM: number;
+  zoom: number;
+  eyeHeightM: number;
+  lidarBase?: string;
+}
+
+export interface SkylineResult {
+  /** Skyline angle above the flat horizon per bearing, degrees; NaN = unknown. */
+  angles: number[];
+  /** What forms the skyline on each bearing. */
+  what: ("terrain" | "lidar")[];
+  distM: number[];
+  /** The lidar tiles were marched (the pin is in a baked town and they loaded). */
+  lidar: boolean;
 }
 
 /** What the footprints did to a probe; absent on a terrain-only probe. */
@@ -80,6 +109,10 @@ export interface ProbeBuildings {
   blockedByBuilding: boolean;
   /** That building's outline, when one blocks. */
   footprint: LatLon[] | null;
+  /** "lidar": measured surface from the baked flight; "osm": footprints. */
+  source?: "osm" | "lidar";
+  /** Height above the street of what blocks, metres (lidar only). */
+  blockerHeightM?: number;
 }
 
 export interface CandidateResult {
@@ -116,6 +149,7 @@ export type WorkerMessage =
       buildingCount: number | null;
     }
   | { type: "ringResult"; requestId: number; results: RingResult[] }
+  | { type: "skylineResult"; requestId: number; result: SkylineResult }
   | {
       type: "probeResult";
       requestId: number;
@@ -191,12 +225,13 @@ function ringTiles(req: RingRequest): TileKey[] {
 
 const post = (m: WorkerMessage) => (self as unknown as Worker).postMessage(m);
 
-self.onmessage = async (e: MessageEvent<SearchRequest | RingRequest | ProbeRequest>) => {
+self.onmessage = async (e: MessageEvent<SearchRequest | RingRequest | ProbeRequest | SkylineRequest>) => {
   const req = e.data;
   try {
     if (req.type === "search") await handleSearch(req);
     else if (req.type === "ring") await handleRing(req);
     else if (req.type === "probe") await handleProbe(req);
+    else if (req.type === "skyline") await handleSkyline(req);
   } catch (err) {
     post({ type: "error", requestId: req.requestId, message: String(err) });
   }
@@ -302,7 +337,38 @@ function probeBuildings(req: ProbeRequest): Promise<BuildingGrid | null> {
   return grid;
 }
 
+/**
+ * How far the lidar is marched. At 1.1 m steps 1.5 km is ~1,400 samples a
+ * ray; a 10 m tree at 1.5 km is 0.3° up from eye height, and past that the
+ * ridge is the skyline almost everywhere in Salida. Rays leaving the baked
+ * area read 0 there (terrain only), as before.
+ */
+const LIDAR_RANGE_M = 1500;
+const lidarGrids = new Map<string, LidarGrid>();
+
+/** The town's lidar with the tiles around `point` loaded, or null outside a baked town. */
+async function lidarFor(point: LatLon, base: string | undefined): Promise<LidarGrid | null> {
+  const town = base ? lidarTownAt(point) : null;
+  if (!town || !base) return null;
+  let g = lidarGrids.get(town.id);
+  if (!g) {
+    g = new LidarGrid(town, base);
+    lidarGrids.set(town.id, g);
+  }
+  const dLat = LIDAR_RANGE_M / 111_320;
+  const dLon = LIDAR_RANGE_M / (111_320 * Math.cos(point.lat * DEG));
+  const ok = await g.fetchBox(point.lat - dLat, point.lon - dLon, point.lat + dLat, point.lon + dLon);
+  return ok ? g : null;
+}
+
+const lidarField = (g: LidarGrid): ObstacleField => ({ sample: g.sample, maxDistM: LIDAR_RANGE_M, stepM: LIDAR_CELL_M });
+
 async function handleProbe(req: ProbeRequest): Promise<void> {
+  if (req.buildings && req.lidarBase && lidarTownAt(req.point)) {
+    const lidar = await lidarFor(req.point, req.lidarBase);
+    if (lidar) return handleLidarProbe(req, lidar);
+    // Tiles didn't load: fall back to the footprints below.
+  }
   const keys = corridorTiles({ ...req, origin: req.point, radiusM: 0 });
   const [, grid] = await Promise.all([
     cache.fetchTiles(keys, (done, total) =>
@@ -346,6 +412,70 @@ async function handleProbe(req: ProbeRequest): Promise<void> {
     },
     buildings,
   });
+}
+
+async function handleLidarProbe(req: ProbeRequest, lidar: LidarGrid): Promise<void> {
+  await cache.fetchTiles(corridorTiles({ ...req, origin: req.point, radiusM: 0 }));
+  const sample = (lat: number, lon: number) => cache.sampleElevation(lat, lon, req.zoom);
+  const r = horizonFan(sample, req.point.lat, req.point.lon, req.azimuthDeg, req.spreadDeg, {
+    maxDistM: req.maxDistM,
+    startStepM: Math.max(40, metersPerPixel(req.point.lat, req.zoom)),
+    eyeHeightM: req.eyeHeightM,
+    obstacles: lidarField(lidar),
+  });
+  const h = r.horizonDistM <= LIDAR_RANGE_M ? lidar.sample(r.horizonLat, r.horizonLon) : 0;
+  post({
+    type: "probeResult",
+    requestId: req.requestId,
+    result: {
+      obstructionDeg: r.maxAngleDeg,
+      horizonDistM: r.horizonDistM,
+      groundM: r.groundM,
+      horizonLat: r.horizonLat,
+      horizonLon: r.horizonLon,
+      noData: r.noData,
+    },
+    buildings: {
+      count: 1,
+      blockedByBuilding: h > 0,
+      footprint: null,
+      source: "lidar",
+      blockerHeightM: h > 0 ? h : undefined,
+    },
+  });
+}
+
+async function handleSkyline(req: SkylineRequest): Promise<void> {
+  // Terrain: a fan of corridors, close enough together that no bearing
+  // crosses a tile that was never fetched.
+  const span = Math.max(...req.azimuths) - Math.min(...req.azimuths);
+  const mid = (Math.max(...req.azimuths) + Math.min(...req.azimuths)) / 2;
+  const seen = new Map<string, TileKey>();
+  const steps = Math.max(1, Math.ceil(span / 3));
+  for (let i = 0; i <= steps; i++) {
+    const az = mid - span / 2 + (span * i) / steps;
+    for (const k of corridorTiles({ origin: req.point, radiusM: 0, azimuthDeg: az, spreadDeg: 0, maxDistM: req.maxDistM, zoom: req.zoom })) {
+      seen.set(tileKeyString(k), k);
+    }
+  }
+  const [, lidar] = await Promise.all([cache.fetchTiles([...seen.values()]), lidarFor(req.point, req.lidarBase)]);
+  const sample = (lat: number, lon: number) => cache.sampleElevation(lat, lon, req.zoom);
+  const opts = {
+    maxDistM: req.maxDistM,
+    startStepM: Math.max(40, metersPerPixel(req.point.lat, req.zoom)),
+    eyeHeightM: req.eyeHeightM,
+    obstacles: lidar ? lidarField(lidar) : undefined,
+  };
+  const angles: number[] = [];
+  const what: SkylineResult["what"] = [];
+  const distM: number[] = [];
+  for (const az of req.azimuths) {
+    const r = marchHorizon(sample, req.point.lat, req.point.lon, az, opts);
+    angles.push(r.noData ? NaN : r.maxAngleDeg);
+    distM.push(r.horizonDistM);
+    what.push(lidar && r.horizonDistM <= LIDAR_RANGE_M && lidar.sample(r.horizonLat, r.horizonLon) > 0 ? "lidar" : "terrain");
+  }
+  post({ type: "skylineResult", requestId: req.requestId, result: { angles, what, distM, lidar: !!lidar } });
 }
 
 async function handleRing(req: RingRequest): Promise<void> {
