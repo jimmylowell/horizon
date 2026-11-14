@@ -23,6 +23,7 @@
 
     <section id="panel">
       <div id="here" hidden></div>
+      <div id="strip" hidden></div>
       <div id="facing-row">
         <div id="facing" role="group" aria-label="Which sky">
           <button data-facing="sun" class="active" title="The sun itself, and when it goes behind the ridge or a building">Sun</button>
@@ -68,6 +69,26 @@
           (most footprints carry no height, so that last one is a guess).
         </p>
         <p>
+          <strong>In Salida</strong> the footprints are replaced by measured heights: the USGS
+          lidar flight
+          <a href="https://www.sciencebase.gov/catalog/item/608cc5edd34e93746a6fe435" target="_blank" rel="noopener">CO_SanLuisJuanMiguel_2020_D20</a>,
+          the highest laser return in each metre-square, less the USGS 1 m
+          <a href="https://www.sciencebase.gov/catalog/item/6217206ad34ec739b2dbf592" target="_blank" rel="noopener">bare-ground model</a>
+          from the same flight, marched 1.5 km from the pin. The USGS catalog gives the
+          collection as 21 September to 19 October 2019; the points' own time stamps over
+          downtown read 21 to 29 September 2020. Which year is right is unknown here.
+          What it cannot know: anything built, cut down or grown since the flight; trees
+          count as solid, leaves or not, and a gap you could see through between branches
+          reads as a wall; and the flight labels nothing above the ground as roof or tree,
+          so neither can this page. Wires are left out. Floors and balconies are not
+          recorded anywhere here, so the view is always from 2 m above the street.
+        </p>
+        <p>
+          <strong>The strip</strong> under the reading is the skyline from the pin, 25° either side
+          of the event: the ridge, and in Salida the roofs and trees in green, with the sun's or
+          moon's path over it, a dot every ten minutes, and the time it meets the skyline.
+        </p>
+        <p>
           <strong>Away</strong> looks at the 60° of sky straight opposite the sun. The Belt of
           Venus is a pink band "roughly 10–20° above the horizon" there during twilight, over
           the dark band of Earth's shadow
@@ -78,7 +99,11 @@
           Map © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>
           contributors · Terrain:
           <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">Mapzen/AWS Open Data</a>
-          (SRTM, NASA/USGS, ETOPO1 &amp; others) · Roads, places and buildings via the Overpass API
+          (SRTM, NASA/USGS, ETOPO1 &amp; others) · Salida lidar and ground model:
+          <a href="https://www.usgs.gov/3d-elevation-program" target="_blank" rel="noopener">USGS 3D Elevation Program</a>
+          read from the
+          <a href="https://registry.opendata.aws/usgs-lidar/" target="_blank" rel="noopener">AWS Open Data copy</a>
+          · Roads, places and buildings via the Overpass API
           · <a href="https://github.com/jimmylowell/horizon" target="_blank" rel="noopener">source code</a> (MIT license, free to use and change)
         </p>
       </details>

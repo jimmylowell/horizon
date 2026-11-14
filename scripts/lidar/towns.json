@@ -1,0 +1,9 @@
+{
+  "salida": {
+    "name": "Salida, CO",
+    "bbox": [-106.01, 38.52, -105.98, 38.54],
+    "project": "CO_SanLuisJuanMiguel_2020_D20",
+    "ept": "https://s3-us-west-2.amazonaws.com/usgs-lidar-public/CO_SanLuisJuanMiguel_2_2020",
+    "utmZone": 13
+  }
+}
