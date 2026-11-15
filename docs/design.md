@@ -4,9 +4,9 @@
 
 ## The first screen
 
-A full-page map centred on Salida, CO (`src/main.ts`, the `state` default), with a draggable pin, the line toward tonight's sunset drawn from it, and a bottom panel with Walk / Bike / Drive, a radius slider and **Find spots**. A top bar holds the date and the event picker (sunrise, sunset, moonrise, moonset).
+The skyline from the pin, large, at the top, with the reading over it; under it the map of Salida, CO (`src/main.ts`, the `state` default) with a draggable pin and the colour overlay. **Setup** holds the event, the date and the eye height (*Skyline first*).
 
-**The one action:** put the pin where you are (drag it, or the locate button) and read the "from here" line: when the sun or moon actually clears or drops behind the ridge, in minutes against the flat-horizon time. **Find spots** is the second action, and a shared link (`#lat,lon,kind,mode,radius[,date]`) runs it on open.
+**The one action:** put the pin where you are (drag it, or the locate button) and read the strip: when the sun or moon clears or drops behind the skyline, and what it is. A shared link (`#lat,lon,kind,mode,radius[,date][,eye=<ft>]`) opens the same pin and event.
 
 ## Who it is for
 
@@ -14,9 +14,9 @@ Someone outside on a nice evening asking "where should I go right now to watch i
 
 ## The three things it does
 
-1. **From here:** ray-marches the terrain from the pin toward the event (±8°) and says what the ridge does to it, e.g. *"Over the ridge ~7:53 PM · az 106° (+20 min)"*, with the sightline to the ridge and its name when OpenStreetMap has one.
-2. **Find spots:** samples points along roads you can stop on, plus mapped viewpoints, peaks, picnic sites, trailheads and parking, inside the travel ring; scores every one the same way and ranks them by minutes gained over the pin. If nothing beats the pin, it says so.
-3. **Shows the whole ring at once:** a diverging heatmap over the travel radius (red blocked, blue above the horizon), so the ranked list has a picture behind it.
+1. **The reading:** ray-marches the terrain (and in Salida the lidar) from the pin toward the event (±8°) and says what the skyline does to it, e.g. *"Behind the ridge ~4:35 PM (−26 min)"*.
+2. **The skyline strip:** the whole circle of skyline from the pin, dragged round or turned with the compass, with the sun's or moon's path over it, and what is in the way named from OpenStreetMap.
+3. **The colour overlay:** the map round the pin coloured by how late the sun stays, so a better spot a block away shows without asking.
 
 ## What it does not do
 
@@ -119,6 +119,96 @@ Not done: floors or floor heights; balconies, windows or roof access; telling ro
 Sources: heights from the USGS flight in *Lidar in town*; footprints, names and addresses from OpenStreetMap contributors, ODbL. The 2 m standing eye, the 400 m reach, the 4 m and 1.5 m spacings and the colour breaks are choices, not sourced numbers. The 20 ft top is Jimmy's.
 
 How Jimmy will know it is right: from a window or a deck he knows in Salida, with the slider at that height, the *From here* time matches when the sun actually goes, to within a few minutes, and the top card names a face he would agree is a good spot.
+
+## Skyline first
+
+Jimmy, 2026-11-14, after trying the lidar and eye-height demos: "The skyline strip is awesome. Get rid of most of the other stuff and except for a setup screen. The away button I don't think makes sense. Just do a bunch of cleanup on the UI, but the skyline ridge view is awesome, and I'd really like to even be able to look around at it if possible. It'd be interesting to identify what is blocking the way, possibly using OpenStreetMap. And I'd also like to revisit the gradient overlay as something that happens automatically instead of the find a better spot."
+
+The page becomes two things: **the skyline view**, which is the app, and **the setup**, which says where you stand and what you are watching for.
+
+### Before and after, 390 px
+
+Before (the eye-height demo, PR #7):
+
+```
+┌────────────── 390 ──────────────┐
+│ Horizon [date] Sunrise Sunset … │  topbar, two rows
+│                                 │
+│            map + pin            │
+│                                 │
+├─────────────────────────────────┤
+│ Behind the ridge ~4:35 PM …     │  reading
+│ Sunset 5:01 · az 247° · ridge … │  one long sub-line
+│ Eye ━━━━○━━━━ standing          │
+│ [strip, 96 px, ±25° only]       │
+│ High spots… three cards…        │
+│ [Sun|Away]  Tap the map…        │
+│ ▸ Find a better spot nearby     │
+│ © OSM · sources…                │
+└─────────────────────────────────┘
+```
+
+After:
+
+```
+┌────────────── 390 ──────────────┐
+│ Behind the ridge ~4:35 PM −26m  │  the reading, one line
+│ ┌─────────────────────────────┐ │
+│ │      ☀ path, dots 10 min    │ │
+│ │  ▁▂▃▅▆▇█▇▆▅ ridge  ▇▇ roofs │ │  the strip, ~45% of the
+│ │ SW    240°    W    260°  NW │ │  screen, dragged round
+│ └─────────────────────────────┘ │  the whole circle
+│ Behind: 128 F St · 9 m, 40 m    │  what is in the way
+│ [⟲ event] [compass]   ⚙ Setup   │
+├─────────────────────────────────┤
+│   map: pin, colour overlay,     │
+│   the thing in the way outlined │
+│ © OSM · sources…                │
+└─────────────────────────────────┘
+```
+
+**Setup** opens as a sheet over the map: the event (sunrise, sunset, moonrise, moonset, with their times), the date, and the eye height. Where is the map itself: tap it or drag the pin, or the locate button to follow you. Closing the sheet puts the view back. The map stays on screen under the strip because the overlay and the thing in the way are drawn on it; it is the "where" of the setup.
+
+### What goes
+
+- **Away**, entirely (the toggle, its reading, `,away` in links: an old link with it opens toward the sun).
+- **Find a better spot nearby**: the fold, its walk/bike/drive and radius controls, its cards, verdict and ranked spots. The colour overlay takes its place. Old links with `,find` open the pin and ignore it.
+- **The best-faces cards** and the coloured building faces of *Eye height and high spots in town*. The eye height itself stays, in the setup.
+- The long sub-line under the reading (azimuth, golden hour, "measured by USGS lidar" and so on). What stays is one reading line, the strip, what is in the way, and the sources line.
+
+### The strip, looked around
+
+1. **The whole circle.** The skyline is marched on 720 bearings, every half degree. Toward the event, ±30° of the path, the rays run 120 km as now; the rest of the circle runs 30 km, the reach the old sky ring used, because fetching terrain tiles 120 km out in every direction is about ten times as many tiles for ridges that sit far below the near ones.
+2. **The view is 70° wide** at a time, about what a phone's camera sees across, and opens centred on where the sun or moon meets the skyline. Drag sideways to turn; a button brings it back to the event.
+3. **Compass points** N, NE, E … along the bottom, and the bearing every 10°.
+4. **The sun's or moon's path is drawn wherever it is in view**, the whole day's arc above the horizon, not only the stretch near the event, with a dot every ten minutes and a time every half hour, and the disc at the moment it meets the skyline, as before.
+5. **Following the compass.** On a phone that gives a heading (iOS `webkitCompassHeading`, others `deviceorientationabsolute`), a *Compass* button turns the strip as he turns. iOS asks permission on the tap. Where no heading comes, the button says so and drag stays.
+
+### What is in the way
+
+Tap the strip at a bearing, and without a tap the bearing where the path meets the skyline. The page reads the ray on that bearing and names what forms the skyline there:
+
+- **Lidar** (Salida): the OpenStreetMap building whose outline holds the lidar point that tops the skyline, by its `name`, else house number and street, else "a building"; with its measured height and distance. Where no outline holds it, **"a tree or something unmapped"**, never a guess. Footprints are asked of Overpass for a 120 m square round the point and kept, so taps nearby cost nothing. When the thing at the meeting point is named, the reading uses the name too ("Behind Safeway ~2:01 PM").
+- **Terrain**: the named peak or ridge from OpenStreetMap as now (`nameSkylinePoints`), else "the ridge", with its distance.
+- On the map: the line from the pin to that point, and the building's outline when there is one.
+
+The flight does not label roofs or trees (*Lidar in town*), so "a tree" is said only as "a tree or something unmapped": what we know is that no outline is there.
+
+### The colour overlay, without a button
+
+Once the pin is down, the map round it colours itself by how late the sun stays (setting) or how early it clears (rising), from the pin's eye height:
+
+- In Salida, inside the lidar, 400 m round the pin, a point every 20 m, each marched over the lidar and the terrain on three rays (the event's bearing ±8°, like the reading).
+- Elsewhere, 3 km round the pin, terrain only, 15 rings.
+- Coloured blue for later (or earlier rising) than the middle of the area, red for sooner, with the key in times: the 5th, middle and 95th percentile read back as clock times by the page's one sun definition.
+- It reruns when the pin, the event, the date or the eye height changes. Points where the lidar under them is as tall as the eye (inside a roof or a tree) are left out, since nobody stands there.
+- The reading and the strip come from the strip's own skyline and path, so the two always agree; outside Salida no OpenStreetMap footprints are counted any more, since their heights were guesses.
+
+Not done: a 3D view; telling roofs from trees, which the flight does not record; buildings outside Salida in the overlay (Overpass for a 3 km square is too slow, *In town*).
+
+Sources: as in *Lidar in town* and *In town*; heading from the browser's [DeviceOrientationEvent](https://developer.mozilla.org/en-US/docs/Web/API/DeviceOrientationEvent) (MDN). The 70° view, the 30 km reach behind, the 400 m and 3 km overlay sizes and the 20 m spacing are choices, not sourced numbers.
+
+How Jimmy will know it is right: standing on F Street, turning with the phone, the strip turns with him and the roofs and ridge on it line up with what he sees; tapping the roof the sun will drop behind names the building he is looking at.
 
 ## How Jimmy will know it is right
 
