@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "astronomy-engine": "^2.1.19",
+    "laz-perf": "^0.0.7",
     "maplibre-gl": "^5.0.0"
   },
   "devDependencies": {

@@ -62,6 +62,7 @@ All fetched live by the browser; nothing is baked into the repo except the three
 | Terrain Tiles, Mapzen / AWS Open Data, [registry.opendata.aws/terrain-tiles](https://registry.opendata.aws/terrain-tiles/), composited from SRTM, USGS 3DEP, GMTED, ETOPO1 and others (attribution per the registry page) | Terrarium-encoded elevation PNGs | `s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png` (`src/elevation/tiles.ts`); optional local cache from `scripts/fetch-terrain.mjs` | A surface model: tree canopy and roofs read as ground. README calls it ~30 m global; not checked here against the registry page | Unit tests in `src/elevation/horizon.test.ts` check the decoding and the march, not the data |
 | OpenStreetMap contributors, [openstreetmap.org/copyright](https://www.openstreetmap.org/copyright), ODbL | Roads, points of interest, building footprints, skyline names | [Overpass API](https://wiki.openstreetmap.org/wiki/Overpass_API), three public mirrors in turn (`src/search/overpass.ts`) | Coverage varies; most buildings carry no height. If Overpass is down, grid cells stand in, flagged "access unverified" | `src/search/roads.test.ts`, `buildings.test.ts` |
 | USGS 3D Elevation Program: lidar point cloud CO_SanLuisJuanMiguel_2020_D20 and its 1 m bare-ground model, [ScienceBase 608cc5ed…](https://www.sciencebase.gov/catalog/item/608cc5edd34e93746a6fe435), [6217206a…](https://www.sciencebase.gov/catalog/item/6217206ad34ec739b2dbf592) | Height above ground of the highest first return, Salida only | Baked once by `scripts/lidar/`, shipped as `lidar/salida/*.png` | Flown 2019 or 2020 (sources disagree); buildings and trees unlabelled; trees solid | Ground points vs ground model, median gap 0.00 m |
+| USGS 3D Elevation Program lidar on AWS, [registry.opendata.aws/usgs-lidar](https://registry.opendata.aws/usgs-lidar/), Entwine copies by Hobu; flight index from [hobuinc/usgs-lidar](https://github.com/hobuinc/usgs-lidar) | Points of the flight over the pin, streamed (*Lidar from USGS, live*) | Browser fetch from `s3-us-west-2.amazonaws.com/usgs-lidar-public/<flight>/`, unpacked with laz-perf in the worker | Ground from the flight's own ground points; 600 m round the pin; 9 MB to 150 m, 38 MB to 600 m in Salida | Same pin, baked and streamed side by side: same reading, Behind the ridge ~4:26 PM |
 | [astronomy-engine](https://github.com/cosinekitty/astronomy), Don Cross, MIT | Rise and set times and azimuths for sun and moon | npm package, runs offline in the browser (`src/astro.ts`) | — | Not checked against a published almanac in this repo |
 | [OpenFreeMap](https://openfreemap.org/), OSM data | Basemap tiles and the landcover layer the forest check reads | `tiles.openfreemap.org/styles/liberty` | — | — |
 | [MapLibre GL JS](https://maplibre.org/), BSD-3-Clause | The map | npm package | — | — |
@@ -209,6 +210,43 @@ Not done: a 3D view; telling roofs from trees, which the flight does not record;
 Sources: as in *Lidar in town* and *In town*; heading from the browser's [DeviceOrientationEvent](https://developer.mozilla.org/en-US/docs/Web/API/DeviceOrientationEvent) (MDN). The 70° view, the 30 km reach behind, the 400 m and 3 km overlay sizes and the 20 m spacing are choices, not sourced numbers.
 
 How Jimmy will know it is right: standing on F Street, turning with the phone, the strip turns with him and the roofs and ridge on it line up with what he sees; tapping the roof the sun will drop behind names the building he is looking at.
+
+## Lidar from USGS, live
+
+Jimmy, in a session on 2026-11-14: "if I wanted to do this countrywide, could the user's client just stream from USGS to do the calculations?" and then "I am curious to try. As download progresses from point the circle with gradient can grow. I have this idea of it kind of growing wider to find a spot, and the gradient should be labeled as far as time of sun or moon going behind."
+
+A trial, built on *Skyline first*. What changes:
+
+1. **Any pin a flight covers gets lidar.** The page looks the pin up in `flights.json`, finds the USGS flight over it, and streams that flight's points straight from the USGS lidar bucket on AWS (`usgs-lidar-public`, Entwine/EPT layout; it answers any site with `Access-Control-Allow-Origin: *`, no key). Outside Salida this is automatic; in Salida a **Baked · Streamed** switch under the strip picks one, so the two can be compared (`,stream` in the link).
+2. **Outward and coarse first.** The worker walks the flight's EPT hierarchy round the pin and fetches its nodes in four rings, 75, 150, 300 and 600 m; inside each ring the coarse nodes come first, then the fine, nearest first, down to the depth whose points are about 1.4 m apart (depth 10 for Salida's flight). Six downloads run at once; each node is unpacked in the worker with [laz-perf](https://github.com/hobuinc/laz-perf) (Apache-2.0, WebAssembly) and folded into a 1.1 m grid, 1.24 km across, centred on the pin (`src/search/stream.ts`).
+3. **The same surface as the bake**, from the points alone: the highest first return per cell, noise (7, 18) and wire (13, 14) dropped. The ground is the flight's own ground points (class 2): the lowest in the 4.4 m cell, or failing that the lowest of the 17.6 m cells round it, out to three cells. The bake uses the USGS 1 m bare-ground model instead; streaming has no such model to hand.
+4. **The circle grows.** As each ring completes, the skyline strip and the reading are worked again over the sharper grid, and the colour overlay is redrawn as a circle exactly as wide as the completed ring: 75, 150, 300, then 600 m. Ground the stream has not reached is not coloured. It widens on its own until 600 m or until he taps **Stop**; a new pin stops the last stream. Past the ring, rays read terrain only.
+5. **The key is in clock times**, as in *Skyline first*: when the sun or moon goes behind the skyline at that spot (or comes out, for a rise), low, middle and high.
+
+### Which flight covers a spot
+
+`public/flights.json` (164 KB, 2,284 flights) is baked by `scripts/lidar/flights.mjs` from Hobu's boundary file of the bucket, [hobuinc/usgs-lidar](https://github.com/hobuinc/usgs-lidar) `boundaries/resources.geojson` (8.8 MB, last updated 2026-11-14 when fetched), cut down to each flight's name, box and year. For a pin the page takes the boxes that hold it, newest year first, and for each fetches that flight's `ept.json` and root hierarchy file and checks the node over the pin holds points; the first that does is streamed. A box is coarser than the flight's outline, so the check is what decides. The index goes stale as flights are added; rerunning the script refreshes it.
+
+**How much of the country.** Unioned in an equal-area projection (EPSG:6933), the flights' outlines cover 7.03 million km², of which 6.94 million km² falls in the box of the lower 48 (125–66° W, 24–50° N). The lower 48 are 8,080,464 km² (Wikipedia, [Contiguous United States](https://en.wikipedia.org/wiki/Contiguous_United_States)), so about 86% by area. Outlines include water and any land over the borders inside that box, so this is an upper figure; it says nothing of a flight's age, density, or whether it labels buildings (Salida's does not).
+
+### Measured, 2026-11-15
+
+Headless Chrome at 390 × 844, pin on F Street (38.53470, −105.99370), sunset. "Throttled" is Puppeteer's *Fast 4G* preset: 1.01 MB/s down, 165 ms latency (its `PredefinedNetworkConditions`), which also slowed the worker's downloads (17 s became 57 s). Times are from the pin going down unless marked.
+
+| | Unthrottled | Throttled (Fast 4G) |
+|---|---|---|
+| Flight found | 1.8 s | 1.7 s |
+| 75 m loaded | 7.2 s, 4.8 MB | 19.7 s, 4.8 MB |
+| 150 m loaded / skyline drawn | 8.5 s / 11.1 s, 8.8 MB | 25.8 s / 29.7 s, 8.8 MB |
+| 300 m loaded | 13.5 s, 18.4 MB | 39.3 s, 18.4 MB |
+| 600 m loaded | 19.6 s, 38.3 MB, 147 files, 6.3 M points | 58.8 s, 38.3 MB |
+| Baked tiles instead: first lidar skyline, from opening the page | about 10 s | 22.5 s (2.3 MB of tiles) |
+
+Denver, downtown (39.74860, −104.99950), unthrottled: flight CO_DRCOG_2_2020 found in 0.5 s, 150 m loaded in 4.9 s with 7.9 MB, 300 m in 7.9 s with 12.3 MB. Its reading, "Behind the ridge ~3:41 PM (−63 min)", is not yet checked: among the towers the blocker is likely a building, and the label may come from the Salida-only naming. Open.
+
+**Is it worth it.** On a good phone connection the first useful answer, 150 m round, takes about half a minute and 9 MB; the full 600 m about a minute and 38 MB, against 2.3 MB for the whole baked town. Fine for a look from where he stands, and it works anywhere a flight covers with nothing baked; too heavy to be the default on a phone data plan, and too slow for walking with the pin following him. The bake stays the better answer for a town he uses often.
+
+Not done: the reading's ground from the 1 m bare-ground model (only the bake has it); a set reach other than 600 m; keeping a stream when the pin moves a few metres (it starts again).
 
 ## How Jimmy will know it is right
 
