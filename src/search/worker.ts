@@ -9,6 +9,7 @@
 import { DEG, destination, type LatLon } from "../geo";
 import { horizonFan, horizonRing, marchHorizon, type ObstacleField } from "../elevation/horizon";
 import { LIDAR_CELL_M, LidarGrid, lidarTownAt } from "./lidar";
+import { gridCandidates } from "./grid";
 import { bestSpots, scoreFaces, type HighSpot, type ScoredFace } from "./highspots";
 import {
   metersPerPixel,
@@ -87,9 +88,34 @@ export interface SkylineRequest {
   /** Bearings marched, degrees clockwise from north. */
   azimuths: number[];
   maxDistM: number;
+  /** Reach per bearing, metres; absent = maxDistM on every bearing. */
+  reachM?: number[];
   zoom: number;
   eyeHeightM: number;
   lidarBase?: string;
+}
+
+/**
+ * The colour overlay round the pin (docs/design.md, *Skyline first*): every
+ * point of a grid marched toward the event, over the lidar where there is one.
+ */
+export interface OverlayRequest {
+  type: "overlay";
+  requestId: number;
+  point: LatLon;
+  radiusM: number;
+  rings: number;
+  azimuthDeg: number;
+  spreadDeg: number;
+  maxDistM: number;
+  zoom: number;
+  eyeHeightM: number;
+  lidarBase?: string;
+}
+
+export interface OverlayPoint extends LatLon {
+  obstructionDeg: number;
+  noData: boolean;
 }
 
 /**
@@ -126,6 +152,11 @@ export interface SkylineResult {
   /** What forms the skyline on each bearing. */
   what: ("terrain" | "lidar")[];
   distM: number[];
+  /** Where the skyline is on each bearing. */
+  lat: number[];
+  lon: number[];
+  /** Lidar height above the ground there, metres; 0 on terrain. */
+  heightM: number[];
   /** The lidar tiles were marched (the pin is in a baked town and they loaded). */
   lidar: boolean;
 }
@@ -182,6 +213,7 @@ export type WorkerMessage =
   | { type: "ringResult"; requestId: number; results: RingResult[] }
   | { type: "skylineResult"; requestId: number; result: SkylineResult }
   | { type: "highSpotsResult"; requestId: number; result: HighSpotsResult }
+  | { type: "overlayResult"; requestId: number; points: OverlayPoint[]; lidar: boolean }
   | {
       type: "probeResult";
       requestId: number;
@@ -257,7 +289,9 @@ function ringTiles(req: RingRequest): TileKey[] {
 
 const post = (m: WorkerMessage) => (self as unknown as Worker).postMessage(m);
 
-self.onmessage = async (e: MessageEvent<SearchRequest | RingRequest | ProbeRequest | SkylineRequest | HighSpotsRequest>) => {
+export type WorkerRequest = SearchRequest | RingRequest | ProbeRequest | SkylineRequest | HighSpotsRequest | OverlayRequest;
+
+self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
   const req = e.data;
   try {
     if (req.type === "search") await handleSearch(req);
@@ -265,6 +299,7 @@ self.onmessage = async (e: MessageEvent<SearchRequest | RingRequest | ProbeReque
     else if (req.type === "probe") await handleProbe(req);
     else if (req.type === "skyline") await handleSkyline(req);
     else if (req.type === "highSpots") await handleHighSpots(req);
+    else if (req.type === "overlay") await handleOverlay(req);
   } catch (err) {
     post({ type: "error", requestId: req.requestId, message: String(err) });
   }
@@ -480,19 +515,46 @@ async function handleLidarProbe(req: ProbeRequest, lidar: LidarGrid): Promise<vo
 }
 
 async function handleSkyline(req: SkylineRequest): Promise<void> {
-  // Terrain: a fan of corridors, close enough together that no bearing
-  // crosses a tile that was never fetched.
-  const span = Math.max(...req.azimuths) - Math.min(...req.azimuths);
-  const mid = (Math.max(...req.azimuths) + Math.min(...req.azimuths)) / 2;
+  // Terrain: a corridor every 3° at that bearing's reach, close enough
+  // together that no ray crosses a tile that was never fetched.
+  const reach = (i: number) => req.reachM?.[i] ?? req.maxDistM;
   const seen = new Map<string, TileKey>();
-  const steps = Math.max(1, Math.ceil(span / 3));
-  for (let i = 0; i <= steps; i++) {
-    const az = mid - span / 2 + (span * i) / steps;
-    for (const k of corridorTiles({ origin: req.point, radiusM: 0, azimuthDeg: az, spreadDeg: 0, maxDistM: req.maxDistM, zoom: req.zoom })) {
+  let lastAz = -Infinity;
+  for (let i = 0; i < req.azimuths.length; i++) {
+    const az = req.azimuths[i];
+    const edge = i === req.azimuths.length - 1 || (i > 0 && reach(i) !== reach(i - 1));
+    if (az - lastAz < 3 && !edge) continue;
+    lastAz = az;
+    for (const k of corridorTiles({ origin: req.point, radiusM: 0, azimuthDeg: az, spreadDeg: 0, maxDistM: reach(i), zoom: req.zoom })) {
       seen.set(tileKeyString(k), k);
     }
   }
   const [, lidar] = await Promise.all([cache.fetchTiles([...seen.values()]), lidarFor(req.point, req.lidarBase)]);
+  const sample = (lat: number, lon: number) => cache.sampleElevation(lat, lon, req.zoom);
+  const base = {
+    startStepM: Math.max(40, metersPerPixel(req.point.lat, req.zoom)),
+    eyeHeightM: req.eyeHeightM,
+    obstacles: lidar ? lidarField(lidar) : undefined,
+  };
+  const out: SkylineResult = { angles: [], what: [], distM: [], lat: [], lon: [], heightM: [], lidar: !!lidar };
+  req.azimuths.forEach((az, i) => {
+    const r = marchHorizon(sample, req.point.lat, req.point.lon, az, { ...base, maxDistM: reach(i) });
+    const h = lidar && r.horizonDistM <= LIDAR_RANGE_M ? lidar.sample(r.horizonLat, r.horizonLon) : 0;
+    out.angles.push(r.noData ? NaN : r.maxAngleDeg);
+    out.distM.push(r.horizonDistM);
+    out.lat.push(r.horizonLat);
+    out.lon.push(r.horizonLon);
+    out.heightM.push(h > 0 ? h : 0);
+    out.what.push(h > 0 ? "lidar" : "terrain");
+  });
+  post({ type: "skylineResult", requestId: req.requestId, result: out });
+}
+
+async function handleOverlay(req: OverlayRequest): Promise<void> {
+  const [, lidar] = await Promise.all([
+    cache.fetchTiles(corridorTiles({ ...req, origin: req.point })),
+    lidarFor(req.point, req.lidarBase),
+  ]);
   const sample = (lat: number, lon: number) => cache.sampleElevation(lat, lon, req.zoom);
   const opts = {
     maxDistM: req.maxDistM,
@@ -500,16 +562,14 @@ async function handleSkyline(req: SkylineRequest): Promise<void> {
     eyeHeightM: req.eyeHeightM,
     obstacles: lidar ? lidarField(lidar) : undefined,
   };
-  const angles: number[] = [];
-  const what: SkylineResult["what"] = [];
-  const distM: number[] = [];
-  for (const az of req.azimuths) {
-    const r = marchHorizon(sample, req.point.lat, req.point.lon, az, opts);
-    angles.push(r.noData ? NaN : r.maxAngleDeg);
-    distM.push(r.horizonDistM);
-    what.push(lidar && r.horizonDistM <= LIDAR_RANGE_M && lidar.sample(r.horizonLat, r.horizonLon) > 0 ? "lidar" : "terrain");
+  const points: OverlayPoint[] = [];
+  for (const c of gridCandidates(req.point, req.radiusM, req.rings)) {
+    // Inside a roof or a tree at this eye height nobody stands: leave it out.
+    if (lidar && lidar.sample(c.lat, c.lon) >= req.eyeHeightM - 0.3) continue;
+    const r = horizonFan(sample, c.lat, c.lon, req.azimuthDeg, req.spreadDeg, opts);
+    points.push({ lat: c.lat, lon: c.lon, obstructionDeg: r.maxAngleDeg, noData: r.noData });
   }
-  post({ type: "skylineResult", requestId: req.requestId, result: { angles, what, distM, lidar: !!lidar } });
+  post({ type: "overlayResult", requestId: req.requestId, points, lidar: !!lidar });
 }
 
 let highGrid: { box: Box; grid: Promise<BuildingGrid | null> } | null = null;

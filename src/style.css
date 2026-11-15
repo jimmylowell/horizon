@@ -10,7 +10,6 @@
   --accent-ink: #ffffff;
   --grade4: #104281;
   --grade3: #2a78d6;
-  --grade2: #6da7ec;
   --grade1: #e34948;
   --grade0: #a92f2f;
 }
@@ -20,7 +19,6 @@
     --surface-raised: #242422;
     --text: #ffffff;
     --text-2: #c3c2b7;
-    --muted: #898781;
     --hairline: #2c2c2a;
     --accent: #3987e5;
   }
@@ -37,345 +35,219 @@ body {
   color: var(--text);
   background: var(--surface);
 }
+/* The view on top, the map under it, the sources line last. */
+body {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+}
 
+#view {
+  flex: none;
+  padding: calc(8px + env(safe-area-inset-top)) 10px 6px;
+  border-bottom: 1px solid var(--hairline);
+}
+#reading {
+  min-height: 22px;
+  margin-bottom: 6px;
+  line-height: 1.3;
+}
+#reading .main {
+  font-size: 16px;
+  font-weight: 700;
+}
+#reading .sub {
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+/* The skyline: dragged round the circle, tapped to name what is there. */
+#strip {
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+}
+#strip:active {
+  cursor: grabbing;
+}
+#strip svg,
+#strip .strip-wait {
+  display: block;
+  width: 100%;
+  background: linear-gradient(#1d2a47, #4a5f86);
+  border-radius: 8px;
+}
+#strip .ridge { fill: #141a26; }
+#strip .lidar { fill: #2f5a3c; }
+#strip .unknown { fill: #666; opacity: 0.5; }
+#strip .flat { stroke: #ffffff55; stroke-dasharray: 3 3; }
+#strip .path { fill: none; stroke-width: 2; }
+#strip .now { fill: none; stroke: #fff; stroke-width: 1.5; }
+#strip .pick { stroke: #fff; stroke-opacity: 0.6; stroke-dasharray: 2 3; }
+#strip .pick-dot { fill: #fff; }
+#strip text { font: 11px system-ui, sans-serif; fill: #e8ecf4; }
+#strip text.meet { font-weight: 700; font-size: 14px; }
+#strip text.bearing { fill: #c0c8d8; }
+#strip text.bearing.cardinal { font-weight: 700; fill: #fff; font-size: 12px; }
+.strip-key { font-size: 11px; color: var(--text-2); margin-top: 3px; }
+.strip-key .k { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: -1px; margin: 0 3px 0 0; }
+.strip-key .k.ridge { background: #141a26; }
+.strip-key .k.lidar { background: #2f5a3c; margin-left: 6px; }
+
+#blocker {
+  font-size: 13px;
+  min-height: 18px;
+  margin: 4px 0 6px;
+  line-height: 1.35;
+}
+
+#view-bar {
+  display: flex;
+  gap: 6px;
+}
+#view-bar button,
+#setup button {
+  border: 1px solid var(--hairline);
+  background: var(--surface-raised);
+  color: var(--text);
+  padding: 6px 10px;
+  font-size: 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#compass[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+#setup-open {
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+#mapwrap {
+  position: relative;
+  flex: 1;
+  min-height: 160px;
+}
 #map {
-  position: fixed;
+  position: absolute;
   inset: 0;
 }
+#overlay-key {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  z-index: 2;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  color: var(--text-2);
+}
+#overlay-key[hidden] { display: none; }
+#overlay-key .bar {
+  display: inline-block;
+  width: 36px;
+  height: 6px;
+  border-radius: 3px;
+  vertical-align: 1px;
+  background: linear-gradient(to right, #a92f2f, #e34948, #f0efec, #6da7ec, #104281);
+}
+#overlay-key .lo { color: var(--grade1); }
+#overlay-key .hi { color: var(--grade3); }
 
-#topbar {
+/* Setup: a sheet over the bottom of the map; the map above it still takes taps. */
+#setup {
   position: fixed;
-  top: 0;
   left: 0;
   right: 0;
+  bottom: 0;
+  z-index: 20;
+  background: var(--surface);
+  border-top: 1px solid var(--hairline);
+  border-radius: 14px 14px 0 0;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.15);
+}
+#setup[hidden] { display: none; }
+@media (min-width: 760px) {
+  #setup { left: auto; right: 12px; bottom: 12px; width: 380px; border: 1px solid var(--hairline); border-radius: 14px; }
+}
+.setup-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.setup-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: calc(8px + env(safe-area-inset-top)) 12px 8px;
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
-  backdrop-filter: blur(8px);
-  border-bottom: 1px solid var(--hairline);
-  z-index: 10;
-  overflow-x: auto;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+  border-top: 1px solid var(--hairline);
 }
-#brand {
-  font-weight: 700;
-  letter-spacing: 0.02em;
-}
+.setup-row .lab { flex: none; width: 3.6em; color: var(--text-2); font-size: 12px; }
+.setup-row .val { color: var(--text-2); font-size: 12px; }
+#locate { margin-left: 4px; }
 #date {
   border: 1px solid var(--hairline);
   background: var(--surface-raised);
   color: var(--text);
   border-radius: 8px;
   padding: 4px 6px;
-  font: 12px system-ui, sans-serif;
-  flex: none;
+  font: 13px system-ui, sans-serif;
 }
+#eye-row input { flex: 1; min-width: 0; }
+#eye-row output { min-width: 7.5em; text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--text-2); }
 #events {
-  display: flex;
-  gap: 6px;
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
 }
 #events button {
-  border: 1px solid var(--hairline);
-  background: var(--surface-raised);
-  color: var(--text);
-  border-radius: 999px;
-  padding: 4px 10px;
-  font-size: 12px;
+  padding: 4px 2px;
+  font-size: 11px;
   line-height: 1.3;
-  cursor: pointer;
+  text-align: center;
+  min-width: 0;
   white-space: nowrap;
+  overflow: hidden;
 }
 #events button .dot {
   display: inline-block;
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  margin-right: 5px;
+  margin-right: 3px;
   vertical-align: 1px;
 }
-#events button .t {
-  display: block;
-  color: var(--text-2);
-  font-size: 11px;
-}
-#events button.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-ink);
-}
-#events button.active .t {
-  color: color-mix(in srgb, var(--accent-ink) 80%, transparent);
-}
-/* Phones: brand and date on the first row, all four event chips on a second
-   row of equal columns, so none is cut off or hidden off-screen
-   (docs/salida-test.md, item 4). */
-@media (max-width: 759px) {
-  #topbar {
-    flex-wrap: wrap;
-    row-gap: 6px;
-    overflow-x: visible;
-  }
-  #date {
-    margin-left: auto;
-  }
-  #events {
-    width: 100%;
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 5px;
-  }
-  #events button {
-    padding: 4px 3px;
-    text-align: center;
-    min-width: 0;
-  }
-  #events button .dot {
-    margin-right: 4px;
-  }
+#events button .t { display: block; color: var(--text-2); font-size: 10px; }
+#events button.active { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+#events button.active .t { color: color-mix(in srgb, var(--accent-ink) 80%, transparent); }
+
+#foot {
+  flex: none;
+  padding: 3px 10px calc(3px + env(safe-area-inset-bottom));
+  max-height: 45vh;
+  overflow-y: auto;
 }
 
-#panel {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  max-height: 52%;
-  display: flex;
-  flex-direction: column;
-  background: var(--surface);
-  border-top: 1px solid var(--hairline);
-  border-radius: 14px 14px 0 0;
-  z-index: 10;
-  padding-bottom: env(safe-area-inset-bottom);
-}
-@media (min-width: 760px) {
-  #panel {
-    left: 12px;
-    right: auto;
-    bottom: 12px;
-    width: 360px;
-    max-height: calc(100% - 90px);
-    border: 1px solid var(--hairline);
-    border-radius: 14px;
-  }
-}
-
-#panel-controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-}
-#modes,
-#facing {
-  display: flex;
-  gap: 4px;
-}
-#modes button,
-#facing button {
-  border: 1px solid var(--hairline);
-  background: var(--surface-raised);
-  color: var(--text);
-  padding: 5px 10px;
-  font-size: 12px;
-  border-radius: 8px;
-  cursor: pointer;
-}
-#modes button.active,
-#facing button.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-ink);
-}
-#radius-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex: 1;
-  min-width: 140px;
-  font-size: 12px;
-  color: var(--text-2);
-}
-#radius {
-  flex: 1;
-}
-#radius-value {
-  min-width: 44px;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-#actions {
-  display: flex;
-  gap: 8px;
-  width: 100%;
-}
-#go {
-  flex: 1;
-  border: none;
-  background: var(--accent);
-  color: var(--accent-ink);
-  font-weight: 600;
-  padding: 8px 16px;
-  border-radius: 10px;
-  cursor: pointer;
-}
-#go:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-#clear {
-  border: 1px solid var(--hairline);
-  background: var(--surface-raised);
-  color: var(--text-2);
-  font-weight: 600;
-  padding: 8px 14px;
-  border-radius: 10px;
-  cursor: pointer;
-}
-#clear[hidden] {
-  display: none;
-}
-
-/* From-here readout: the answer for the pin, no search needed. */
-#here {
-  padding: 0 12px 8px;
-}
-#here[hidden] {
-  display: none;
-}
-#here .here-main {
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.35;
-}
-#here .here-sub {
-  font-size: 12px;
-  color: var(--text-2);
-  line-height: 1.5;
-  margin-top: 2px;
-}
-/* Skyline strip: ridge, roofs and trees, and the sun's or moon's path over them. */
-#strip {
-  padding: 0 12px 8px;
-}
-#strip[hidden] {
-  display: none;
-}
-#strip svg {
-  display: block;
-  background: linear-gradient(#24314d, #3d4f73);
-  border-radius: 6px;
-}
-#strip .ridge { fill: #1b2230; }
-#strip .lidar { fill: #33503d; }
-#strip .unknown { fill: #555; opacity: 0.5; }
-#strip .flat { stroke: #ffffff55; stroke-dasharray: 3 3; }
-#strip .path { fill: none; stroke-width: 1.5; }
-#strip .now { fill: none; stroke: #fff; stroke-width: 1.5; }
-#strip text { font: 10px system-ui, sans-serif; fill: #e8ecf4; }
-#strip text.meet { font-weight: 700; font-size: 12px; }
-#strip text.bearing { fill: #c0c8d8; }
-#strip .strip-note { font-size: 11px; color: var(--text-2); margin-top: 3px; }
-#strip .k { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: -1px; margin: 0 3px 0 0; }
-#strip .k.ridge { background: #1b2230; }
-#strip .k.lidar { background: #33503d; margin-left: 6px; }
-/* Eye-height slider: one row under the reading. */
-#eye-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 12px 6px;
-  font-size: 12px;
-  color: var(--text-2);
-}
-#eye-row[hidden] { display: none; }
-#eye-row input { flex: 1; min-width: 0; }
-#eye-row output { min-width: 7.5em; text-align: right; font-variant-numeric: tabular-nums; }
-/* High spots on building faces (Salida). */
-#high { padding: 0 12px 8px; font-size: 12px; }
-#high[hidden] { display: none; }
-#high .high-note { color: var(--text-2); margin: 2px 0; }
-#high button.high-spot {
-  display: block;
-  width: 100%;
-  text-align: left;
-  margin: 4px 0;
-  padding: 6px 8px;
-  border: 1px solid #8884;
-  border-radius: 6px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-#high .high-key span { display: inline-block; width: 14px; height: 4px; vertical-align: 2px; margin: 0 3px 0 6px; }
 .g4 { color: var(--grade4); }
 .g3 { color: var(--grade3); }
-.g2 { color: var(--text-2); }
 .g1 { color: var(--grade1); }
 .g0 { color: var(--grade0); }
-/* Unknown: terrain toward the event did not load. Muted and italic, never the "open" blue. */
 .gu { color: var(--text-2); font-style: italic; }
 @media (prefers-color-scheme: dark) {
   .g4 { color: #86b6ef; }
   .g0 { color: #e66767; }
 }
-.gain {
-  display: inline-block;
-  font-size: 11px;
-  font-weight: 600;
-  border-radius: 999px;
-  padding: 1px 7px;
-  margin-left: 4px;
-  vertical-align: 1px;
-  color: var(--text-2);
-  border: 1px solid var(--hairline);
-}
-.gain.good {
-  color: var(--accent-ink);
-  background: var(--accent);
-  border-color: var(--accent);
-}
-.gain.bad {
-  color: var(--grade1);
-}
-.verdict-line {
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1.3;
-  color: var(--text);
-  border-left: 4px solid var(--grade1);
-  background: var(--surface-raised);
-  border-radius: 10px;
-  padding: 8px 10px;
-  margin-bottom: 6px;
-}
-.verdict-line.stay {
-  border-left-color: var(--grade4);
-}
-#status {
-  padding: 0 12px 6px;
-  font-size: 12px;
-  color: var(--text-2);
-  min-height: 16px;
-}
 
-#status:empty {
-  display: none;
-}
-
-#results {
-  overflow-y: auto;
-  padding: 0 12px;
-}
-/* One small line under the verdict: colour key and any warnings, folded
-   (docs/salida-test.md, item 4). Tap to open the full sentences. */
 .fine {
   font-size: 11px;
   color: var(--muted);
-  margin: 0 0 8px;
   line-height: 1.4;
 }
 .fine summary {
@@ -385,136 +257,13 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.fine summary::-webkit-details-marker {
-  display: none;
-}
-.fine summary::after {
-  content: " ▸";
-}
-.fine[open] summary::after {
-  content: " ▾";
-}
-.fine .w {
-  color: var(--grade1);
-}
-.fine .bar {
-  display: inline-block;
-  width: 36px;
-  height: 6px;
-  border-radius: 3px;
-  margin-right: 6px;
-  vertical-align: 1px;
-  background: linear-gradient(to right, #a92f2f, #e34948, #f0efec, #6da7ec, #104281);
-}
-.fine p {
-  margin: 4px 0 0;
-  color: var(--text-2);
-  font-size: 12px;
-}
-.spot-card {
-  border: 1px solid var(--hairline);
-  background: var(--surface-raised);
-  border-radius: 12px;
-  padding: 10px 12px;
-  margin-bottom: 8px;
-}
-.spot-card .head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-.spot-card .rank {
-  flex: none;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--accent);
-  color: var(--accent-ink);
-  font-size: 12px;
-  font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  align-self: center;
-}
-.spot-card .name {
-  font-weight: 600;
-  font-size: 14px;
-}
-.spot-card .chip {
-  font-size: 11px;
-  color: var(--text-2);
-  border: 1px solid var(--hairline);
-  border-radius: 999px;
-  padding: 1px 7px;
-  white-space: nowrap;
-}
-.spot-card .skyring {
-  flex: none;
-  align-self: center;
-  margin-left: auto;
-}
-.skyring line.open {
-  stroke: #79b3e8;
-  stroke-width: 1.6;
-  stroke-linecap: round;
-}
-.skyring line.blocked {
-  stroke: color-mix(in srgb, var(--muted) 45%, transparent);
-  stroke-width: 1.6;
-  stroke-linecap: round;
-}
-.spot-card .verdict {
-  font-size: 12px;
-  margin-top: 3px;
-  font-weight: 600;
-}
-.spot-card .detail {
-  font-size: 12px;
-  color: var(--text-2);
-  margin-top: 3px;
-  line-height: 1.5;
-}
-.spot-card .flag {
-  font-size: 12px;
-  margin-top: 4px;
-  color: var(--grade1);
-}
-.spot-card .actions {
-  margin-top: 6px;
-}
-.spot-card .actions a {
-  font-size: 12px;
-  color: var(--accent);
-  text-decoration: none;
-  font-weight: 600;
-}
-
-#credits {
-  font-size: 10px;
-  color: var(--muted);
-  line-height: 1.5;
-}
-#credits a {
-  color: var(--muted);
-}
-
-.spot-marker {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: var(--surface-raised);
-  border: 2px solid var(--accent);
-  color: var(--text);
-  font: 700 12px/20px system-ui, sans-serif;
-  text-align: center;
-  cursor: pointer;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
-}
-.spot-marker.poi {
-  background: var(--accent);
-  color: var(--accent-ink);
-}
+.fine summary::-webkit-details-marker { display: none; }
+.fine summary::after { content: " ▸"; }
+.fine[open] summary::after { content: " ▾"; }
+.fine p { margin: 6px 0; color: var(--text-2); font-size: 12px; }
+#method summary a { color: inherit; }
+#credits { font-size: 10px; color: var(--muted); line-height: 1.5; }
+#credits a { color: var(--muted); }
 
 .origin-marker {
   width: 22px;
@@ -525,84 +274,4 @@ body {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
   cursor: grab;
 }
-.origin-marker:active {
-  cursor: grabbing;
-}
-
-/* MapLibre corner controls: below the topbar, and above the phone bottom
-   sheet. --topbar-h / --panel-h are measured live (see main.ts). */
-#map .maplibregl-ctrl-top-right,
-#map .maplibregl-ctrl-top-left {
-  top: var(--topbar-h, 56px);
-}
-#map .maplibregl-ctrl-bottom-right,
-#map .maplibregl-ctrl-bottom-left {
-  bottom: var(--panel-h, 0px);
-}
-@media (min-width: 760px) {
-  #map .maplibregl-ctrl-bottom-right,
-  #map .maplibregl-ctrl-bottom-left {
-    bottom: 0;
-  }
-  /* Panel sits bottom-left on wide screens; slide the logo past it. */
-  #map .maplibregl-ctrl-bottom-left {
-    left: 384px;
-  }
-}
-
-.maplibregl-popup-content {
-  font: 12px/1.5 system-ui, sans-serif;
-  color: #0b0b0b;
-}
-.maplibregl-popup-content a {
-  color: #2a78d6;
-  font-weight: 600;
-  text-decoration: none;
-}
-
-#facing[hidden] { display: none; }
-#method { margin: 4px 12px 8px; }
-#method p { margin: 6px 0; }
-
-/* The panel is the pin's answer first; Find spots is behind a fold. */
-#panel {
-  overflow-y: auto;
-  padding-top: 10px;
-}
-#facing-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 12px 8px;
-}
-#facing-row .hint {
-  font-size: 11px;
-  color: var(--muted);
-  line-height: 1.3;
-}
-#find {
-  border-top: 1px solid var(--hairline);
-}
-#find > summary {
-  cursor: pointer;
-  list-style: none;
-  padding: 9px 12px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--accent);
-}
-#find > summary::-webkit-details-marker {
-  display: none;
-}
-#find > summary::after {
-  content: " ▸";
-}
-#find[open] > summary::after {
-  content: " ▾";
-}
-#find #panel-controls {
-  padding-top: 0;
-}
-#method summary a {
-  color: inherit;
-}
+.origin-marker:active { cursor: grabbing; }
