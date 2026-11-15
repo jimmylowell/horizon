@@ -17,6 +17,8 @@ import { circleAzimuths, pathMeets, rayIndex, relDeg, renderSkylineView, type Ci
 import { fetchBuildingsBox, type BuildingGrid, type Box } from "./search/buildings";
 import { nameSkylinePoints } from "./search/horizonFeature";
 import { lidarTownAt } from "./search/lidar";
+import { EPT_ROOT, findFlight, type FlightRow } from "./search/flights";
+import type { StreamProgress } from "./search/stream";
 import { footprintHolding } from "./search/blocker";
 import type { OverlayPoint, SkylineResult, WorkerMessage, WorkerRequest } from "./search/worker";
 
@@ -33,6 +35,8 @@ interface State {
   /** Kept only so old links write back the same: `#lat,lon,kind,mode,radius`. */
   mode: string;
   radius: string;
+  /** Lidar streamed from USGS (`,stream` in the link) rather than the baked tiles; outside a baked town, streamed whenever a flight covers the pin. */
+  stream: boolean;
 }
 
 const EYE_MIN_FT = 6.5;
@@ -49,6 +53,7 @@ const state: State = {
   eyeFt: EYE_MIN_FT,
   mode: "walk",
   radius: "1",
+  stream: false,
 };
 
 function todayStr(): string {
@@ -78,12 +83,14 @@ function readHash(): void {
   if (m[4] && /^\d+(\.\d+)?$/.test(m[4])) state.radius = m[4];
   if (m[5] && /^\d{4}-\d{2}-\d{2}$/.test(m[5])) state.date = m[5];
   const eye = m.slice(5).map((x) => /^eye=(\d+(?:\.\d+)?)$/.exec(x)).find((x) => x);
+  if (m.slice(5).includes("stream")) state.stream = true;
   if (eye) state.eyeFt = Math.min(EYE_MAX_FT, Math.max(EYE_MIN_FT, Math.round(parseFloat(eye[1]) * 2) / 2));
 }
 function writeHash(): void {
   const date = state.date && state.date !== todayStr() ? `,${state.date}` : "";
   const eye = state.eyeFt > EYE_MIN_FT ? `,eye=${state.eyeFt}` : "";
-  history.replaceState(null, "", `#${state.loc.lat.toFixed(5)},${state.loc.lon.toFixed(5)},${state.kind},${state.mode},${state.radius}${date}${eye}`);
+  const stream = state.stream && lidarTownAt(state.loc) ? ",stream" : "";
+  history.replaceState(null, "", `#${state.loc.lat.toFixed(5)},${state.loc.lon.toFixed(5)},${state.kind},${state.mode},${state.radius}${date}${eye}${stream}`);
 }
 readHash();
 
@@ -103,6 +110,7 @@ const dateInput = $("date") as HTMLInputElement;
 const eyeInput = $("eye") as HTMLInputElement;
 const eyeOut = $("eye-out");
 const keyEl = $("overlay-key");
+const streamEl = $("stream");
 
 const timeFmt = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 const dayTimeFmt = new Intl.DateTimeFormat(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
@@ -328,7 +336,7 @@ function drawView(): void {
       picked,
       now: new Date(),
     }) +
-    `<div class="strip-key">${sky.r.lidar ? `<span class="k ridge"></span>ridge <span class="k lidar"></span>roofs and trees, USGS lidar` : lidarTownAt(sky.loc) ? `<span class="k ridge"></span>ridge · lidar didn't load` : `<span class="k ridge"></span>ridge · no roofs or trees outside Salida`} · drag to look round, tap to name</div>`;
+    `<div class="strip-key">${sky.r.lidar ? `<span class="k ridge"></span>ridge <span class="k lidar"></span>roofs and trees, USGS lidar${streaming() ? `, streamed to ${live.reachM} m` : ""}` : streaming() ? `<span class="k ridge"></span>ridge · lidar on its way` : flight ? `<span class="k ridge"></span>ridge · no lidar here` : lidarTownAt(sky.loc) ? `<span class="k ridge"></span>ridge · lidar didn't load` : `<span class="k ridge"></span>ridge · no roofs or trees outside Salida`} · drag to look round, tap to name</div>`;
 }
 
 function renderReading(note?: string): void {
@@ -361,15 +369,17 @@ function renderReading(note?: string): void {
   readingEl.innerHTML = `<span class="main ${grade}">${word} ${what} ~${timeFmt.format(t)}${delta}</span> <span class="sub">flat ${flat}${moon}</span>`;
 }
 
-async function readSkyline(): Promise<void> {
+async function readSkyline(soft = false): Promise<void> {
   const ev = state.events[state.kind];
   const seq = ++skySeq;
-  sky = null;
-  meet = null;
-  meetName = null;
-  picked = null;
-  blockerEl.textContent = "";
-  drawBlocker(null, "", null);
+  if (!soft) {
+    sky = null;
+    meet = null;
+    meetName = null;
+    picked = null;
+    blockerEl.textContent = "";
+    drawBlocker(null, "", null);
+  }
   if (!ev) {
     stripEl.innerHTML = "";
     renderReading();
@@ -377,8 +387,10 @@ async function readSkyline(): Promise<void> {
   }
   const loc = state.loc;
   path = dayPath(ev, loc);
-  renderReading(lidarTownAt(loc) ? "Reading the skyline: ridge, roofs and trees…" : "Reading the skyline…");
-  stripEl.innerHTML = `<div class="strip-wait" style="height:${viewHeight()}px"></div>`;
+  if (!soft) {
+    renderReading(lidarTownAt(loc) ? "Reading the skyline: ridge, roofs and trees…" : "Reading the skyline…");
+    stripEl.innerHTML = `<div class="strip-wait" style="height:${viewHeight()}px"></div>`;
+  }
   const azimuths = circleAzimuths();
   // The event side reaches far; behind, a shorter reach keeps the tiles few.
   const centre = meetGuess(path, ev);
@@ -394,15 +406,17 @@ async function readSkyline(): Promise<void> {
       zoom: ZOOM,
       eyeHeightM: eyeM(),
       lidarBase: LIDAR_BASE,
+      stream: streaming() && live.reachM > 0,
     });
     if (seq !== skySeq) return;
+    if (streaming() && live.reachM > 0) mark(`skyline ${live.reachM} m`);
     sky = { angles: reply.result.angles, what: reply.result.what, r: reply.result, loc, reachM };
     const m = pathMeets(sky, path);
     meet = m ? { point: m.unknown ? m.point : refineMeet(sky, path, m.index), unknown: m.unknown } : null;
     facing = meet ? meet.point.azDeg : ev.azimuthDeg;
     renderReading();
     drawView();
-    if (meet && !meet.unknown) void nameAt(meet.point.azDeg, true);
+    if (meet && !meet.unknown && !soft) void nameAt(meet.point.azDeg, true);
   } catch (err) {
     console.error(err);
     if (seq === skySeq) renderReading("The terrain didn't load. Move the pin to try again.");
@@ -601,8 +615,15 @@ async function readOverlay(): Promise<void> {
   }
   const loc = state.loc;
   const town = !!lidarTownAt(loc);
-  const radiusM = town ? 400 : 3000;
-  const rings = town ? 20 : 15;
+  // Streamed: the circle is only as wide as the lidar that has arrived, so
+  // no ground is coloured that the stream has not reached.
+  const streamed = streaming();
+  if (streamed && live.reachM === 0) {
+    if (mapReady) clearHeatmap(map);
+    return;
+  }
+  const radiusM = streamed ? live.reachM : town ? 400 : 3000;
+  const rings = streamed ? Math.max(4, Math.round(radiusM / 20)) : town ? 20 : 15;
   let reply;
   try {
     reply = await askWorker<"overlayResult">({
@@ -617,12 +638,14 @@ async function readOverlay(): Promise<void> {
       zoom: ZOOM,
       eyeHeightM: eyeM(),
       lidarBase: LIDAR_BASE,
+      stream: streamed,
     });
   } catch (err) {
     console.error(err);
     return;
   }
   if (seq !== overlaySeq) return;
+  if (streamed) mark(`overlay ${radiusM} m`);
   await whenMapReady();
   if (seq !== overlaySeq) return;
   const known = reply.points.filter((p: OverlayPoint) => !p.noData && Number.isFinite(p.obstructionDeg));
@@ -719,6 +742,98 @@ async function refresh(): Promise<void> {
   void readOverlay(); // aimed where the path meets the skyline, so after it
 }
 
+// ---------- lidar streamed from USGS (docs/design.md, *Lidar from USGS, live*) ----------
+
+let flights: Promise<FlightRow[]> | null = null;
+/** The flight covering the pin, once looked up; null = none, or not looked up yet. */
+let flight: string | null = null;
+let flightLoc: LatLon | null = null;
+const live: StreamProgress & { id: number } = { id: 0, reachM: 0, files: 0, totalFiles: 0, bytes: 0, points: 0, ms: 0, done: false, stopped: false };
+/** Timings for the measurements, from the pin going down: also on `window.__stream`. */
+let marks: { what: string; ms: number; mb: number }[] = [];
+let streamT0 = 0;
+function mark(what: string): void {
+  marks.push({ what, ms: Math.round(performance.now() - streamT0), mb: +(live.bytes / 1e6).toFixed(1) });
+  (window as unknown as { __stream: unknown }).__stream = { flight, marks, live: { ...live } };
+}
+const streaming = () => !!flight && (state.stream || !lidarTownAt(state.loc));
+
+function renderStream(): void {
+  const town = lidarTownAt(state.loc);
+  const sw = town
+    ? `<span class="seg"><button type="button" data-src="baked" aria-pressed="${!state.stream}">Baked</button><button type="button" data-src="stream" aria-pressed="${state.stream}">Streamed</button></span> `
+    : "";
+  let body = "";
+  if (flightLoc !== state.loc) body = "Looking up which USGS flight covers here…";
+  else if (!flight) body = town ? "" : "No USGS lidar flight covers here: ridge only.";
+  else if (!streaming()) body = `${escapeHtml(town!.name)} baked tiles`;
+  else {
+    const mb = (live.bytes / 1e6).toFixed(1);
+    const s = (live.ms / 1000).toFixed(0);
+    const left = live.done ? (live.stopped ? "stopped" : "done") : "";
+    body = `USGS ${escapeHtml(flight)}: ${live.reachM ? `${live.reachM} m round` : "first points"} · ${mb} MB · ${s} s ${left}`;
+    if (!live.done) body += ` <button type="button" id="stream-stop">Stop</button>`;
+  }
+  streamEl.innerHTML = sw + `<span class="txt">${body}</span>`;
+}
+streamEl.addEventListener("click", (e) => {
+  const b = (e.target as HTMLElement).closest("button");
+  if (!b) return;
+  if (b.id === "stream-stop") {
+    worker.postMessage({ type: "streamStop", requestId: ++requestId } satisfies WorkerRequest);
+    return;
+  }
+  const want = b.dataset.src === "stream";
+  if (want === state.stream) return;
+  state.stream = want;
+  writeHash();
+  void startLidar();
+});
+
+/** Find the flight for the pin and, when streaming, start it; the skyline and circle redraw as each ring lands. */
+async function startLidar(): Promise<void> {
+  const loc = state.loc;
+  worker.postMessage({ type: "streamStop", requestId: ++requestId } satisfies WorkerRequest);
+  Object.assign(live, { id: ++requestId, reachM: 0, files: 0, totalFiles: 0, bytes: 0, points: 0, ms: 0, done: false, stopped: false });
+  marks = [];
+  streamT0 = performance.now();
+  if (flightLoc !== loc) {
+    flight = null;
+    renderStream();
+    flights ??= fetch(new URL("flights.json", document.baseURI)).then((r) => r.json()).then((j) => j.rows as FlightRow[]);
+    let found = null;
+    try {
+      found = await findFlight(await flights, loc);
+    } catch (err) {
+      console.error(err);
+    }
+    if (loc !== state.loc) return;
+    flight = found?.name ?? null;
+    flightLoc = loc;
+    mark("flight found");
+  }
+  renderStream();
+  if (!streaming()) {
+    void refresh();
+    return;
+  }
+  const id = live.id;
+  void refresh(); // terrain first; the lidar joins it ring by ring
+  worker.postMessage({ type: "stream", requestId: id, point: loc, eptUrl: EPT_ROOT + flight } satisfies WorkerRequest);
+}
+worker.addEventListener("message", (e: MessageEvent<WorkerMessage>) => {
+  const m = e.data;
+  if (m.type !== "streamProgress" || m.requestId !== live.id) return;
+  const grew = m.progress.reachM > live.reachM;
+  Object.assign(live, m.progress);
+  renderStream();
+  if (grew) {
+    mark(`${live.reachM} m loaded`);
+    void readSkyline(true).then(() => readOverlay());
+    if (sky) drawView();
+  } else if (live.done) mark("done");
+});
+
 function refreshEvents(): void {
   state.events = nextEvents(state.loc.lat, state.loc.lon, baseTime());
   if (!state.events[state.kind]) {
@@ -726,7 +841,8 @@ function refreshEvents(): void {
     if (first) state.kind = first;
   }
   renderEvents();
-  void refresh();
+  if (flightLoc === state.loc) void refresh();
+  else void startLidar();
 }
 
 function setLocation(loc: LatLon, pan: boolean): void {

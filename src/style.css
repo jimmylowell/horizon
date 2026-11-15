@@ -103,6 +103,33 @@ body {
   line-height: 1.35;
 }
 
+#stream {
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 0 0 6px;
+  opacity: 0.85;
+}
+#stream:empty {
+  display: none;
+}
+#stream .seg button {
+  font: inherit;
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+}
+#stream .seg button[aria-pressed="true"] {
+  background: #ef7d1a;
+  border-color: #ef7d1a;
+  color: #111;
+}
+#stream #stream-stop {
+  font: inherit;
+  padding: 1px 8px;
+  margin-left: 4px;
+}
+
 #view-bar {
   display: flex;
   gap: 6px;

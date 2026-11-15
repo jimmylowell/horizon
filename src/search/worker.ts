@@ -9,6 +9,7 @@
 import { DEG, destination, type LatLon } from "../geo";
 import { horizonFan, horizonRing, marchHorizon, type ObstacleField } from "../elevation/horizon";
 import { LIDAR_CELL_M, LidarGrid, lidarTownAt } from "./lidar";
+import { STREAM_CELL_M, StreamGrid, type StreamProgress } from "./stream";
 import { gridCandidates } from "./grid";
 import { bestSpots, scoreFaces, type HighSpot, type ScoredFace } from "./highspots";
 import {
@@ -93,6 +94,24 @@ export interface SkylineRequest {
   zoom: number;
   eyeHeightM: number;
   lidarBase?: string;
+  /** March the lidar streamed from USGS for this pin instead of the baked tiles. */
+  stream?: boolean;
+}
+
+/**
+ * Stream a flight's lidar round the pin (docs/design.md, *Lidar from USGS,
+ * live*). Progress comes back as "streamProgress" until done or stopped; a
+ * new stream request stops the last one.
+ */
+export interface StreamRequest {
+  type: "stream";
+  requestId: number;
+  point: LatLon;
+  eptUrl: string;
+}
+export interface StreamStopRequest {
+  type: "streamStop";
+  requestId: number;
 }
 
 /**
@@ -111,6 +130,7 @@ export interface OverlayRequest {
   zoom: number;
   eyeHeightM: number;
   lidarBase?: string;
+  stream?: boolean;
 }
 
 export interface OverlayPoint extends LatLon {
@@ -214,6 +234,7 @@ export type WorkerMessage =
   | { type: "skylineResult"; requestId: number; result: SkylineResult }
   | { type: "highSpotsResult"; requestId: number; result: HighSpotsResult }
   | { type: "overlayResult"; requestId: number; points: OverlayPoint[]; lidar: boolean }
+  | { type: "streamProgress"; requestId: number; progress: StreamProgress }
   | {
       type: "probeResult";
       requestId: number;
@@ -289,7 +310,15 @@ function ringTiles(req: RingRequest): TileKey[] {
 
 const post = (m: WorkerMessage) => (self as unknown as Worker).postMessage(m);
 
-export type WorkerRequest = SearchRequest | RingRequest | ProbeRequest | SkylineRequest | HighSpotsRequest | OverlayRequest;
+export type WorkerRequest =
+  | SearchRequest
+  | RingRequest
+  | ProbeRequest
+  | SkylineRequest
+  | HighSpotsRequest
+  | OverlayRequest
+  | StreamRequest
+  | StreamStopRequest;
 
 self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
   const req = e.data;
@@ -300,6 +329,10 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
     else if (req.type === "skyline") await handleSkyline(req);
     else if (req.type === "highSpots") await handleHighSpots(req);
     else if (req.type === "overlay") await handleOverlay(req);
+    else if (req.type === "stream") await handleStream(req);
+    else if (req.type === "streamStop") {
+      if (activeStream) activeStream.stopped = true;
+    }
   } catch (err) {
     post({ type: "error", requestId: req.requestId, message: String(err) });
   }
@@ -431,6 +464,27 @@ async function lidarFor(point: LatLon, base: string | undefined): Promise<LidarG
 
 const lidarField = (g: LidarGrid): ObstacleField => ({ sample: g.sample, maxDistM: LIDAR_RANGE_M, stepM: LIDAR_CELL_M });
 
+/** The stream for the current pin; its grid sharpens while skyline and overlay requests read it. */
+let activeStream: StreamGrid | null = null;
+
+async function handleStream(req: StreamRequest): Promise<void> {
+  if (activeStream) activeStream.stopped = true;
+  const g = new StreamGrid(req.point, req.eptUrl);
+  activeStream = g;
+  await g.run((progress) => post({ type: "streamProgress", requestId: req.requestId, progress }));
+}
+
+/** What the skyline and overlay march over: the stream, the baked tiles, or nothing. */
+async function surfaceFor(req: { point: LatLon; lidarBase?: string; stream?: boolean }): Promise<ObstacleField | null> {
+  if (req.stream) {
+    const g = activeStream;
+    if (!g || Math.abs(g.pin.lat - req.point.lat) > 1e-7 || Math.abs(g.pin.lon - req.point.lon) > 1e-7) return null;
+    return { sample: g.sample, maxDistM: LIDAR_RANGE_M, stepM: STREAM_CELL_M };
+  }
+  const lidar = await lidarFor(req.point, req.lidarBase);
+  return lidar ? lidarField(lidar) : null;
+}
+
 async function handleProbe(req: ProbeRequest): Promise<void> {
   if (req.buildings && req.lidarBase && lidarTownAt(req.point)) {
     const lidar = await lidarFor(req.point, req.lidarBase);
@@ -529,12 +583,12 @@ async function handleSkyline(req: SkylineRequest): Promise<void> {
       seen.set(tileKeyString(k), k);
     }
   }
-  const [, lidar] = await Promise.all([cache.fetchTiles([...seen.values()]), lidarFor(req.point, req.lidarBase)]);
+  const [, lidar] = await Promise.all([cache.fetchTiles([...seen.values()]), surfaceFor(req)]);
   const sample = (lat: number, lon: number) => cache.sampleElevation(lat, lon, req.zoom);
   const base = {
     startStepM: Math.max(40, metersPerPixel(req.point.lat, req.zoom)),
     eyeHeightM: req.eyeHeightM,
-    obstacles: lidar ? lidarField(lidar) : undefined,
+    obstacles: lidar ?? undefined,
   };
   const out: SkylineResult = { angles: [], what: [], distM: [], lat: [], lon: [], heightM: [], lidar: !!lidar };
   req.azimuths.forEach((az, i) => {
@@ -551,16 +605,13 @@ async function handleSkyline(req: SkylineRequest): Promise<void> {
 }
 
 async function handleOverlay(req: OverlayRequest): Promise<void> {
-  const [, lidar] = await Promise.all([
-    cache.fetchTiles(corridorTiles({ ...req, origin: req.point })),
-    lidarFor(req.point, req.lidarBase),
-  ]);
+  const [, lidar] = await Promise.all([cache.fetchTiles(corridorTiles({ ...req, origin: req.point })), surfaceFor(req)]);
   const sample = (lat: number, lon: number) => cache.sampleElevation(lat, lon, req.zoom);
   const opts = {
     maxDistM: req.maxDistM,
     startStepM: Math.max(40, metersPerPixel(req.point.lat, req.zoom)),
     eyeHeightM: req.eyeHeightM,
-    obstacles: lidar ? lidarField(lidar) : undefined,
+    obstacles: lidar ?? undefined,
   };
   const points: OverlayPoint[] = [];
   for (const c of gridCandidates(req.point, req.radiusM, req.rings)) {
