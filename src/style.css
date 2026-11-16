@@ -291,6 +291,8 @@ body {
 #method summary a { color: inherit; }
 #credits { font-size: 10px; color: var(--muted); line-height: 1.5; }
 #credits a { color: var(--muted); }
+.mjc-foot { margin: 6px 0 0; text-align: center; font-size: 11px; color: var(--muted); }
+.mjc-foot a { color: inherit; }
 
 .origin-marker {
   width: 22px;
