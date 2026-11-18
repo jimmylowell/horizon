@@ -11,6 +11,7 @@ node scripts/lidar/fetch.mjs salida ../hz-lidar          # ground model + catalo
 ```
 
 `out/salida/` then holds six PNGs and `index.json` (point classes, the
-points' GPS-time span, the ground check). For a build, copy the folder to
-`public/lidar/salida/`; it is not committed. To serve the tiles from R2
-instead, upload the folder and build with `VITE_LIDAR_BASE=https://…/`.
+points' GPS-time span, the ground check). Copy the folder to
+`public/lidar/salida/` and commit it: the build ships it with the page. To
+serve the tiles from elsewhere (R2), upload the folder and build with
+`VITE_LIDAR_BASE=https://…/`.

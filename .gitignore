@@ -2,4 +2,3 @@ node_modules/
 dist/
 terrain-cache/
 .DS_Store
-public/lidar/
