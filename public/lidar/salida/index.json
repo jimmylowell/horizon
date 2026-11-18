@@ -1,0 +1,183 @@
+{
+ "town": "Salida, CO",
+ "project": "CO_SanLuisJuanMiguel_2020_D20",
+ "ept": "https://s3-us-west-2.amazonaws.com/usgs-lidar-public/CO_SanLuisJuanMiguel_2_2020",
+ "cellLat": 0.00001,
+ "cellLon": 0.0000125,
+ "tileDeg": 0.01,
+ "metresPerUnit": 0.25,
+ "kinds": {
+  "none": 0,
+  "building": 1,
+  "vegetation": 2,
+  "other": 3,
+  "nodata": 255
+ },
+ "bounds": {
+  "s": 38.52,
+  "w": -106.01,
+  "n": 38.54,
+  "e": -105.98
+ },
+ "pointsGpsTime": {
+  "first": "2020-09-21",
+  "last": "2020-09-29"
+ },
+ "classes": {
+  "1": 11296712,
+  "2": 21104771,
+  "7": 29,
+  "9": 111664,
+  "17": 5903,
+  "18": 2,
+  "20": 7694
+ },
+ "groundCheck": {
+  "medianGapM": 0,
+  "shiftedM": 0,
+  "cells": 42100
+ },
+ "kindCells": {
+  "building": 0,
+  "vegetation": 0,
+  "other": 1607395,
+  "nodata": 0,
+  "all": 4800000
+ },
+ "tiles": [
+  {
+   "s": 38.52,
+   "w": -106.01,
+   "file": "38.52_-106.01.png"
+  },
+  {
+   "s": 38.52,
+   "w": -106,
+   "file": "38.52_-106.00.png"
+  },
+  {
+   "s": 38.52,
+   "w": -105.99,
+   "file": "38.52_-105.99.png"
+  },
+  {
+   "s": 38.53,
+   "w": -106.01,
+   "file": "38.53_-106.01.png"
+  },
+  {
+   "s": 38.53,
+   "w": -106,
+   "file": "38.53_-106.00.png"
+  },
+  {
+   "s": 38.53,
+   "w": -105.99,
+   "file": "38.53_-105.99.png"
+  }
+ ],
+ "sources": [
+  {
+   "title": "USGS Lidar Point Cloud CO_SanLuisJuanMiguel_2020_D20 13S_DC_1163",
+   "url": "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/CO_SanLuisJuanMiguel_2020_D20/CO_SanLuisJuanMiguel_2_2020/LAZ/USGS_LPC_CO_SanLuisJuanMiguel_2020_D20_13S_DC_1163.laz",
+   "published": "2021-04-28",
+   "metaUrl": "https://www.sciencebase.gov/catalog/item/608cc5edd34e93746a6fe435"
+  },
+  {
+   "title": "USGS Lidar Point Cloud CO_SanLuisJuanMiguel_2020_D20 13S_DC_1164",
+   "url": "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/CO_SanLuisJuanMiguel_2020_D20/CO_SanLuisJuanMiguel_2_2020/LAZ/USGS_LPC_CO_SanLuisJuanMiguel_2020_D20_13S_DC_1164.laz",
+   "published": "2021-04-28",
+   "metaUrl": "https://www.sciencebase.gov/catalog/item/608cc5bcd34e93746a6fe1f8"
+  },
+  {
+   "title": "USGS Lidar Point Cloud CO_SanLuisJuanMiguel_2020_D20 13S_DC_1165",
+   "url": "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/CO_SanLuisJuanMiguel_2020_D20/CO_SanLuisJuanMiguel_2_2020/LAZ/USGS_LPC_CO_SanLuisJuanMiguel_2020_D20_13S_DC_1165.laz",
+   "published": "2021-04-28",
+   "metaUrl": "https://www.sciencebase.gov/catalog/item/608cc59ad34e93746a6fe075"
+  },
+  {
+   "title": "USGS Lidar Point Cloud CO_SanLuisJuanMiguel_2020_D20 13S_DC_1166",
+   "url": "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/CO_SanLuisJuanMiguel_2020_D20/CO_SanLuisJuanMiguel_2_2020/LAZ/USGS_LPC_CO_SanLuisJuanMiguel_2020_D20_13S_DC_1166.laz",
+   "published": "2021-04-28",
+   "metaUrl": "https://www.sciencebase.gov/catalog/item/608cc597d34e93746a6fe050"
+  },
+  {
+   "title": "USGS Lidar Point Cloud CO_SanLuisJuanMiguel_2020_D20 13S_DC_1263",
+   "url": "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/CO_SanLuisJuanMiguel_2020_D20/CO_SanLuisJuanMiguel_2_2020/LAZ/USGS_LPC_CO_SanLuisJuanMiguel_2020_D20_13S_DC_1263.laz",
+   "published": "2021-04-28",
+   "metaUrl": "https://www.sciencebase.gov/catalog/item/608cc2e8d34e93746a6fc0b1"
+  },
+  {
+   "title": "USGS Lidar Point Cloud CO_SanLuisJuanMiguel_2020_D20 13S_DC_1264",
+   "url": "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/CO_SanLuisJuanMiguel_2020_D20/CO_SanLuisJuanMiguel_2_2020/LAZ/USGS_LPC_CO_SanLuisJuanMiguel_2020_D20_13S_DC_1264.laz",
+   "published": "2021-04-28",
+   "metaUrl": "https://www.sciencebase.gov/catalog/item/608cc2e5d34e93746a6fc09e"
+  },
+  {
+   "title": "USGS Lidar Point Cloud CO_SanLuisJuanMiguel_2020_D20 13S_DC_1265",
+   "url": "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/CO_SanLuisJuanMiguel_2020_D20/CO_SanLuisJuanMiguel_2_2020/LAZ/USGS_LPC_CO_SanLuisJuanMiguel_2020_D20_13S_DC_1265.laz",
+   "published": "2021-04-28",
+   "metaUrl": "https://www.sciencebase.gov/catalog/item/608cc2e3d34e93746a6fc079"
+  },
+  {
+   "title": "USGS Lidar Point Cloud CO_SanLuisJuanMiguel_2020_D20 13S_DC_1266",
+   "url": "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/CO_SanLuisJuanMiguel_2020_D20/CO_SanLuisJuanMiguel_2_2020/LAZ/USGS_LPC_CO_SanLuisJuanMiguel_2020_D20_13S_DC_1266.laz",
+   "published": "2021-04-28",
+   "metaUrl": "https://www.sciencebase.gov/catalog/item/608cc2e0d34e93746a6fc041"
+  },
+  {
+   "title": "USGS Lidar Point Cloud CO_SanLuisJuanMiguel_2020_D20 13S_DC_1363",
+   "url": "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/CO_SanLuisJuanMiguel_2020_D20/CO_SanLuisJuanMiguel_2_2020/LAZ/USGS_LPC_CO_SanLuisJuanMiguel_2020_D20_13S_DC_1363.laz",
+   "published": "2021-04-28",
+   "metaUrl": "https://www.sciencebase.gov/catalog/item/608cbf96d34e93746a6fa182"
+  },
+  {
+   "title": "USGS Lidar Point Cloud CO_SanLuisJuanMiguel_2020_D20 13S_DC_1364",
+   "url": "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/CO_SanLuisJuanMiguel_2020_D20/CO_SanLuisJuanMiguel_2_2020/LAZ/USGS_LPC_CO_SanLuisJuanMiguel_2020_D20_13S_DC_1364.laz",
+   "published": "2021-04-28",
+   "metaUrl": "https://www.sciencebase.gov/catalog/item/608cbf93d34e93746a6fa158"
+  },
+  {
+   "title": "USGS Lidar Point Cloud CO_SanLuisJuanMiguel_2020_D20 13S_DC_1365",
+   "url": "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/CO_SanLuisJuanMiguel_2020_D20/CO_SanLuisJuanMiguel_2_2020/LAZ/USGS_LPC_CO_SanLuisJuanMiguel_2020_D20_13S_DC_1365.laz",
+   "published": "2021-04-28",
+   "metaUrl": "https://www.sciencebase.gov/catalog/item/608cbf90d34e93746a6fa139"
+  },
+  {
+   "title": "USGS Lidar Point Cloud CO_SanLuisJuanMiguel_2020_D20 13S_DC_1366",
+   "url": "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/CO_SanLuisJuanMiguel_2020_D20/CO_SanLuisJuanMiguel_2_2020/LAZ/USGS_LPC_CO_SanLuisJuanMiguel_2020_D20_13S_DC_1366.laz",
+   "published": "2021-04-28",
+   "metaUrl": "https://www.sciencebase.gov/catalog/item/608cbf8dd34e93746a6fa11f"
+  },
+  {
+   "title": "USGS Lidar Point Cloud CO_SanLuisJuanMiguel_2020_D20 13S_DC_1463",
+   "url": "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/CO_SanLuisJuanMiguel_2020_D20/CO_SanLuisJuanMiguel_2_2020/LAZ/USGS_LPC_CO_SanLuisJuanMiguel_2020_D20_13S_DC_1463.laz",
+   "published": "2021-04-28",
+   "metaUrl": "https://www.sciencebase.gov/catalog/item/608cbc0fd34e93746a6f7b6d"
+  },
+  {
+   "title": "USGS Lidar Point Cloud CO_SanLuisJuanMiguel_2020_D20 13S_DC_1464",
+   "url": "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/CO_SanLuisJuanMiguel_2020_D20/CO_SanLuisJuanMiguel_2_2020/LAZ/USGS_LPC_CO_SanLuisJuanMiguel_2020_D20_13S_DC_1464.laz",
+   "published": "2021-04-28",
+   "metaUrl": "https://www.sciencebase.gov/catalog/item/608cbc06d34e93746a6f7b17"
+  },
+  {
+   "title": "USGS Lidar Point Cloud CO_SanLuisJuanMiguel_2020_D20 13S_DC_1465",
+   "url": "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/CO_SanLuisJuanMiguel_2020_D20/CO_SanLuisJuanMiguel_2_2020/LAZ/USGS_LPC_CO_SanLuisJuanMiguel_2020_D20_13S_DC_1465.laz",
+   "published": "2021-04-28",
+   "metaUrl": "https://www.sciencebase.gov/catalog/item/608cbbe4d34e93746a6f7946"
+  },
+  {
+   "title": "USGS Lidar Point Cloud CO_SanLuisJuanMiguel_2020_D20 13S_DC_1466",
+   "url": "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/CO_SanLuisJuanMiguel_2020_D20/CO_SanLuisJuanMiguel_2_2020/LAZ/USGS_LPC_CO_SanLuisJuanMiguel_2020_D20_13S_DC_1466.laz",
+   "published": "2021-04-28",
+   "metaUrl": "https://www.sciencebase.gov/catalog/item/608cbbe1d34e93746a6f7932"
+  },
+  {
+   "title": "USGS 1 Meter 13 x41y427 CO_SanLuisJuanMiguel_2020_D20",
+   "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/CO_SanLuisJuanMiguel_2020_D20/TIFF/USGS_1M_13_x41y427_CO_SanLuisJuanMiguel_2020_D20.tif",
+   "published": "2021-11-24",
+   "metaUrl": "https://www.sciencebase.gov/catalog/item/6217206ad34ec739b2dbf592"
+  }
+ ]
+}

@@ -4,9 +4,9 @@
   --surface-raised: #ffffff;
   --text: #0b0b0b;
   --text-2: #52514e;
-  --muted: #898781;
+  --muted: #74726d;
   --hairline: #e1e0d9;
-  --accent: #2a78d6;
+  --accent: #2262b0;
   --accent-ink: #ffffff;
   --grade4: #104281;
   --grade3: #2a78d6;
@@ -20,7 +20,8 @@
     --text: #ffffff;
     --text-2: #c3c2b7;
     --hairline: #2c2c2a;
-    --accent: #3987e5;
+    --accent: #1964be;
+    --muted: #898781;
   }
 }
 
@@ -283,6 +284,9 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-height: 24px;
+  padding: 4px 0;
+  line-height: 16px;
 }
 .fine summary::-webkit-details-marker { display: none; }
 .fine summary::after { content: " ▸"; }

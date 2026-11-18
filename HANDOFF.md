@@ -4,10 +4,10 @@
 
 **Favicon:** `favicon.ico`, `favicon.svg` and `apple-touch-icon.png` in `public/`, linked from every page. Live check: `curl -s -o /dev/null -w '%{content_type}' https://horizon.myjimmycloud.com/favicon.ico` must print an image type.
 
-**State:** branch `reckon/590` (on PR #9, on #7, on #8): *Lidar from USGS, live*, design and measurements in `docs/design.md`. Any pin a USGS flight covers streams that flight's points from the `usgs-lidar-public` bucket in the browser (`src/search/stream.ts`, laz-perf in the worker), ring by ring to 600 m; the skyline and reading are worked again and the colour circle widens as each ring lands, with a Stop button. In Salida a Baked · Streamed switch compares the two (`,stream` in the link). The flight is found in `public/flights.json` (`src/search/flights.ts`, baked by `scripts/lidar/flights.mjs`). Salida, Fast 4G, 390 px: 150 m in ~26 s / 8.8 MB, 600 m in ~59 s / 38.3 MB. `npm test` 82 pass, `npm run build` passes.
+**State:** `main` is live: Salida lidar and the skyline strip, the eye-height slider to 20 ft, skyline first, and lidar streamed from USGS (`docs/design.md`). The Salida bake is committed in `public/lidar/salida/` (2.3 MB, seven files) and ships with the page; rebuild it with `scripts/lidar/README.md`. Colours meet the contrast floor: chosen chip #2262b0 light / #1964be dark, muted grey #74726d light / #898781 dark, and the sources line is 24 px tall. `npm test` 82 pass, `npm run build` passes.
 
-**Next:** Jimmy opens the demo on his phone and says whether the wait is worth it, and whether streaming should stay a choice or go.
+**Next:** Jimmy tries it on his phone in Salida and says what to change.
 
-**Decided:** rings 75/150/300/600 m; nodes down to ~1.4 m point spacing; ground from the flight's own class-2 points (no bare-ground model when streaming); the circle colours only completed rings.
+**Decided:** rings 75/150/300/600 m; nodes down to ~1.4 m point spacing; ground from the flight's own class-2 points (no bare-ground model when streaming); the circle colours only completed rings. The Salida tiles stay on Pages, not R2: they are small and read whole, and the one R2 bucket is sprawl's.
 
-**Open:** Denver downtown reads "Behind the ridge ~3:41 PM (−63 min)", unchecked. A few tall streamed bars at 150 m vanish by 600 m, probably the ground estimate firming up. Everything listed under Open for PR #9 still stands (removed features' code, compass on a real phone, tiles not in R2).
+**Open:** Denver downtown reads "Behind the ridge ~3:41 PM (−63 min)", unchecked. A few tall streamed bars at 150 m vanish by 600 m, probably the ground estimate firming up. The removed features' code is still in the tree; the compass is untried on a real phone. Text is 12 px, with 10 px chip times (accessibility audit; a look change, not made).
