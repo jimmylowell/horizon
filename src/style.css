@@ -254,7 +254,7 @@ body {
 }
 #events button .t { display: block; color: var(--text-2); font-size: 10px; }
 #events button.active { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-#events button.active .t { color: color-mix(in srgb, var(--accent-ink) 80%, transparent); }
+#events button.active .t { color: var(--accent-ink); }
 
 #foot {
   flex: none;
