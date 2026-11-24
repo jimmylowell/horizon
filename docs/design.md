@@ -248,6 +248,59 @@ Denver, downtown (39.74860, −104.99950), unthrottled: flight CO_DRCOG_2_2020 f
 
 Not done: the reading's ground from the 1 m bare-ground model (only the bake has it); a set reach other than 600 m; keeping a stream when the pin moves a few metres (it starts again).
 
+## Loading faster
+
+Jimmy, in a session on 2026-11-24, after a moonrise at Herks Werks in Poncha Springs: "functionality seems great but needs to load quicker."
+
+**Terrain detail by distance.** The skyline and the colour circle read terrain at zoom 12 (about 30 m pixels) out to 8 km, zoom 10 to 40 km, and zoom 8 beyond (`src/elevation/ladder.ts`). Every ray used to read zoom 11 all the way out, and the far ridges were most of the download. A ridge 40 km away is a fraction of a degree whether it is read from 30 m or 500 m pixels. On 2,100 sight lines from roads round Salida toward the 2026-11-24 moonrise, compared with zoom 12 all the way out, the median change was 0.000°, 99% were within 0.18°, and the worst was 0.25° (about a minute and a half of moonrise). Near the pin the terrain is finer than at zoom 11.
+
+Measured 2026-11-24, headless Chrome at 390 × 844, 12 Mbit/s down and 60 ms latency, cache off, moonrise:
+
+| Pin | First answer, zoom 11 → ladder | Terrain downloaded | Full 600 m lidar | Reading |
+|---|---|---|---|---|
+| Herks Werks, Poncha Springs (38.51748, −106.07600), streamed lidar | 15.6 s → 5.4 s | 21.6 MB → 4.5 MB | 30.8 s → 24.3 s (28.5 MB either way) | ~4:54 → ~4:53 PM, +17 min |
+| F Street, Salida (38.53470, −105.99890), baked lidar | 15.3 s → 8.7 s | 15.6 MB → 4.0 MB | — | ~6:24 → ~6:23 PM, +107 min |
+
+The lidar is now most of what a pin downloads outside Salida. Starting the stream only once the terrain skyline is in would take at most a second off the first answer at this speed and delay the lidar by as much, so it is not done.
+
+## Proposed: what comes next
+
+Ideas from the same session, for Jimmy's pushback. None is built.
+
+His words: "Searching only along roards/paths seems best for choosing spot, but our search method is slow." "can we show the terrain/lidar on the map as well somehow? options for other details/layers?" "i'm also curious about expanding the heatmap from 600m efficiently." "what would baking this for chaffee county or around salida look like? that would just calculate the rise/set times for moon+sun givin the date and use lidar scans?"
+
+### Roads coloured by when it clears
+
+Instead of a ranked list, the roads themselves are coloured blue (clears early) to red (late), with the same key as the circle. The roads come from the map's own tiles, not Overpass: OpenFreeMap's `transportation` layer carries each road's `class`, `surface` and `access` (checked 2026-11-24 on nine zoom-14 tiles round CR 140, 53 KB in all), and the phone already has those tiles. Overpass was the 70-second wait in the Salida test. Reading roads out of the map's tiles is an idea from [hippomaps](https://github.com/cdutsov/hippomaps) (GPL-3.0: the idea only, no code). The session ran this offline over 7,865 points on roads within 28 km of Salida for that night's moonrise. Its best paved public spot, CR 140 at US 50 (38.53970, −106.13446), read 4:46; the app read 4:47 there.
+
+### The circle past 600 m
+
+The lidar is what stops it at 600 m: 28 MB to there, and four times the area for each doubling of the radius. Past it, two ways that cost little:
+
+1. **Terrain only beyond the lidar.** Keep 0–600 m as it is, then carry on to 3 km on terrain alone at a coarser spacing (60–100 m), drawn so it is plain that trees and roofs are not counted there.
+2. **Share the far ridge.** Seen from points a few hundred metres apart, ridges 5 km and more away are almost the same. Each point of the circle marches only its first 5 km and takes the rest from a few shared far rays. A 5 km ray took 0.14 ms against 0.50 ms for 150 km, so the circle would score about 3½ times faster.
+
+### Baking the valley
+
+Two bakes; neither bakes times. Times depend on the date and the skyline does not. With a spot's skyline in hand, any date, sun or moon, rise or set, is worked out in the browser in a moment by astronomy-engine, as now.
+
+1. **The lidar, baked wider.** The Salida bake is the measured height of roofs and trees in 1 m cells: 2.3 MB for about 6 km² (0.02° × 0.03°), roughly 0.4 MB a km² in town and likely more in forest. Bake it for the valley floor from Buena Vista to Poncha Springs, and a pin reads the few tiles round it, about 1–2 MB, instead of streaming 28 MB. The same scripts do it (`scripts/lidar/`), run once per area. `flights.json` has six USGS flights whose boxes overlap Chaffee County (2010 to 2020). Boxes are coarser than the flights' outlines, so which flight covers which part gets checked when baking.
+2. **The skyline, baked for every road point.** For points every 10 m along the roads, store the skyline round the whole circle: 360 bearings, one byte each in 0.1° steps. The 28 km circle round Salida holds about 2,000 km of road, so about 200,000 points and 72 MB before compression. Neighbouring points along a road look nearly the same, so it should pack several times smaller, in tiles fetched by area. The browser then colours every road for any date without marching a single ray, which makes *Roads coloured by when it clears* instant. At about 0.4 ms a ray the bake is roughly 8 hours of one core: a night on the XPS.
+
+**Limits of both bakes:** the lidar was flown in 2020 (trees grow, buildings go up); the eye height is fixed at bake time (bake two heights, or bake at 1.7 m and march only the slider's difference live); a bake goes stale until it is run again. **Hosting:** Pages takes files up to 25 MiB, and the valley bakes would be many small tiles, so Pages may do; R2 is the fallback. Where they go, and whether any of it costs money, is an approval before anything is built.
+
+### Layers on the map
+
+- **Relief shading** from the terrain tiles the page already downloads: MapLibre draws it from a `raster-dem` source with `encoding: "terrarium"`.
+- **Contour lines** from the same tiles, drawn in the browser by a small plugin.
+- **3D tilt** with the terrain raised, looking toward the event from the pin.
+- **Trees and roofs as a layer:** the height grid the lidar already builds, painted green by height in the circle, so the tree in the way shows on the map.
+- **Where it clears on the ridge:** the point on the skyline where the body appears, with the sightline to it (partly there now, *What is in the way*).
+- **Public land** (BLM and Forest Service), so the best spot is somewhere he may stand.
+- **Aerial photos** from USGS (public domain), to check the trees at a spot.
+
+**Open for Jimmy:** which of these first, and whether the bakes go ahead. The session's pick, not his: roads coloured by when it clears, then the lidar baked for the valley.
+
 ## How Jimmy will know it is right
 
 Standing somewhere he knows around Salida, the "from here" time matches when the sun actually drops behind the ridge, to within a few minutes.

@@ -244,7 +244,8 @@ function askWorker<T extends WorkerMessage["type"]>(req: WorkerRequest): Promise
   });
 }
 
-const ZOOM = 11;
+/** Terrain zoom near the pin; the far ridges are read coarser (src/elevation/ladder.ts). */
+const ZOOM = 12;
 /** Toward the event the ridge is read this far out; the rest of the circle, BEHIND_M. */
 const EVENT_REACH_M = 120_000;
 const BEHIND_M = 30_000;

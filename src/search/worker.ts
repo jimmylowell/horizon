@@ -8,6 +8,7 @@
 
 import { DEG, destination, type LatLon } from "../geo";
 import { horizonFan, horizonRing, marchHorizon, type ObstacleField } from "../elevation/horizon";
+import { ladderSampler, ladderTiles, zoomLadder } from "../elevation/ladder";
 import { LIDAR_CELL_M, LidarGrid, lidarTownAt } from "./lidar";
 import { STREAM_CELL_M, StreamGrid, type StreamProgress } from "./stream";
 import { gridCandidates } from "./grid";
@@ -570,8 +571,10 @@ async function handleLidarProbe(req: ProbeRequest, lidar: LidarGrid): Promise<vo
 
 async function handleSkyline(req: SkylineRequest): Promise<void> {
   // Terrain: a corridor every 3° at that bearing's reach, close enough
-  // together that no ray crosses a tile that was never fetched.
+  // together that no ray crosses a tile that was never fetched; fine tiles
+  // near, coarser ones for the far ridges (docs/design.md, *Loading faster*).
   const reach = (i: number) => req.reachM?.[i] ?? req.maxDistM;
+  const bands = zoomLadder(req.zoom);
   const seen = new Map<string, TileKey>();
   let lastAz = -Infinity;
   for (let i = 0; i < req.azimuths.length; i++) {
@@ -579,12 +582,12 @@ async function handleSkyline(req: SkylineRequest): Promise<void> {
     const edge = i === req.azimuths.length - 1 || (i > 0 && reach(i) !== reach(i - 1));
     if (az - lastAz < 3 && !edge) continue;
     lastAz = az;
-    for (const k of corridorTiles({ origin: req.point, radiusM: 0, azimuthDeg: az, spreadDeg: 0, maxDistM: reach(i), zoom: req.zoom })) {
+    for (const k of ladderTiles({ origin: req.point, radiusM: 0, azimuthDeg: az, spreadDeg: 0, maxDistM: reach(i), bands })) {
       seen.set(tileKeyString(k), k);
     }
   }
   const [, lidar] = await Promise.all([cache.fetchTiles([...seen.values()]), surfaceFor(req)]);
-  const sample = (lat: number, lon: number) => cache.sampleElevation(lat, lon, req.zoom);
+  const sample = ladderSampler((lat, lon, z) => cache.sampleElevation(lat, lon, z), req.point, bands);
   const base = {
     startStepM: Math.max(40, metersPerPixel(req.point.lat, req.zoom)),
     eyeHeightM: req.eyeHeightM,
@@ -605,8 +608,9 @@ async function handleSkyline(req: SkylineRequest): Promise<void> {
 }
 
 async function handleOverlay(req: OverlayRequest): Promise<void> {
-  const [, lidar] = await Promise.all([cache.fetchTiles(corridorTiles({ ...req, origin: req.point })), surfaceFor(req)]);
-  const sample = (lat: number, lon: number) => cache.sampleElevation(lat, lon, req.zoom);
+  const bands = zoomLadder(req.zoom);
+  const [, lidar] = await Promise.all([cache.fetchTiles(ladderTiles({ ...req, origin: req.point, bands })), surfaceFor(req)]);
+  const read = (lat: number, lon: number, z: number) => cache.sampleElevation(lat, lon, z);
   const opts = {
     maxDistM: req.maxDistM,
     startStepM: Math.max(40, metersPerPixel(req.point.lat, req.zoom)),
@@ -617,7 +621,7 @@ async function handleOverlay(req: OverlayRequest): Promise<void> {
   for (const c of gridCandidates(req.point, req.radiusM, req.rings)) {
     // Inside a roof or a tree at this eye height nobody stands: leave it out.
     if (lidar && lidar.sample(c.lat, c.lon) >= req.eyeHeightM - 0.3) continue;
-    const r = horizonFan(sample, c.lat, c.lon, req.azimuthDeg, req.spreadDeg, opts);
+    const r = horizonFan(ladderSampler(read, c, bands), c.lat, c.lon, req.azimuthDeg, req.spreadDeg, opts);
     points.push({ lat: c.lat, lon: c.lon, obstructionDeg: r.maxAngleDeg, noData: r.noData });
   }
   post({ type: "overlayResult", requestId: req.requestId, points, lidar: !!lidar });
