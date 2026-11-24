@@ -35,9 +35,15 @@
         <b>Setup</b>
         <button id="setup-close" type="button">Done</button>
       </div>
-      <div class="setup-row">
+      <form class="setup-row" id="place-form" role="search">
         <span class="lab">Where</span>
-        <span class="val">Tap the map or drag the pin. <button id="locate" type="button">Use my location</button></span>
+        <input id="place" type="search" placeholder="Search a place or lat, lon" enterkeyhint="search" autocomplete="off" aria-label="Search a place, or paste coordinates" />
+        <button type="submit">Find</button>
+      </form>
+      <div id="place-results" hidden></div>
+      <div class="setup-row setup-sub">
+        <span class="lab"></span>
+        <span class="val">Or tap the map, or <button id="locate" type="button">Use my location</button></span>
       </div>
       <div class="setup-row"><span class="lab">Watch</span><nav id="events" aria-label="Event picker"></nav></div>
       <label class="setup-row"><span class="lab">Date</span><input id="date" type="date" aria-label="Date to plan for" /></label>
