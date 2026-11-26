@@ -88,22 +88,107 @@ export interface ViewOptions {
   /** Bearing picked by a tap: a mark on the skyline. */
   picked?: number | null;
   now?: Date;
+  /** Per ray: read to the shorter reach only, drawn a shade lighter. */
+  shortReach?: boolean[];
 }
+
+/** The zoom steps of the strip, in degrees across (docs/design.md, *The strip, wider*). */
+export const FOV_STEPS = [30, 50, 70, 100, 140, 200, 280, 360];
+export const FOV_MIN = 30;
+export const FOV_MAX = 360;
+
+/**
+ * The opening width: the path from an hour before the meeting to an hour
+ * after, 8° spare each side, rounded up to 10°, between 70° and 360°.
+ * Returns the width and the bearing to centre on.
+ */
+export function openingView(path: SkyPath, meet: PathPoint, hourMs = 3_600_000): { fovDeg: number; centreDeg: number } {
+  const t = +meet.time;
+  let lo = 0;
+  let hi = 0;
+  for (const p of path.points) {
+    if (Math.abs(+p.time - t) > hourMs || p.altDeg < -3) continue;
+    const r = relDeg(p.azDeg, meet.azDeg);
+    lo = Math.min(lo, r);
+    hi = Math.max(hi, r);
+  }
+  const span = Math.ceil((hi - lo + 16) / 10) * 10;
+  const fovDeg = Math.min(FOV_MAX, Math.max(70, span));
+  const centreDeg = fovDeg >= FOV_MAX ? meet.azDeg : (((meet.azDeg + (lo + hi) / 2) % 360) + 360) % 360;
+  return { fovDeg, centreDeg };
+}
+
+/** The next zoom step out (dir 1) or in (dir −1) from any width. */
+export function zoomStep(fov: number, dir: 1 | -1): number {
+  if (dir > 0) return FOV_STEPS.find((f) => f > fov + 0.5) ?? FOV_MAX;
+  return [...FOV_STEPS].reverse().find((f) => f < fov - 0.5) ?? FOV_MIN;
+}
+
+/** The height range drawn for a window: from the skyline in view. */
+export function viewRange(s: CircleSkyline, centreDeg: number, fovDeg: number): { yMin: number; yMax: number } {
+  const n = s.angles.length;
+  const step = 360 / n;
+  let lo = -2;
+  let hi = 10;
+  for (let i = 0; i < n; i++) {
+    const a = s.angles[i];
+    if (!Number.isFinite(a) || Math.abs(relDeg(i * step, centreDeg)) > fovDeg / 2 + 1) continue;
+    lo = Math.min(lo, a - 0.5);
+    hi = Math.max(hi, a + 4);
+  }
+  return { yMin: lo, yMax: Math.min(35, hi) };
+}
+
+/** How many times steeper than true the strip draws heights against bearings. */
+export function steepness(s: CircleSkyline, o: { width: number; height: number; centreDeg: number; fovDeg: number }): number {
+  const { yMin, yMax } = viewRange(s, o.centreDeg, o.fovDeg);
+  return (o.height - PAD_B) / (yMax - yMin) / (o.width / o.fovDeg);
+}
+
+/**
+ * The path's dot and label spacing for a window: the shortest of the steps
+ * that keeps dots 6 px and times 56 px apart, measured along the path in view.
+ */
+export function pathCadence(path: SkyPath, o: { width: number; height: number; centreDeg: number; fovDeg: number }, yMin: number, yMax: number): { dotMin: number; labelMin: number } {
+  const { width: W, height: H, centreDeg: c, fovDeg: fov } = o;
+  const px = (az: number) => (relDeg(az, c) / fov) * W;
+  const py = (alt: number) => ((H - PAD_B) * alt) / (yMax - yMin);
+  // Pixels the path moves in ten minutes, the median over the stretch in view.
+  const gaps: number[] = [];
+  const pts = path.points;
+  for (let i = 10; i < pts.length; i += 10) {
+    const a = pts[i - 10];
+    const b = pts[i];
+    if (Math.abs(relDeg(a.azDeg, c)) > fov / 2 || Math.abs(relDeg(b.azDeg, c)) > fov / 2) continue;
+    gaps.push(Math.hypot(px(b.azDeg) - px(a.azDeg), py(b.altDeg) - py(a.altDeg)));
+  }
+  if (!gaps.length) return { dotMin: 10, labelMin: 30 };
+  gaps.sort((x, y) => x - y);
+  const per10 = gaps[Math.floor(gaps.length / 2)];
+  const dotMin = [10, 20, 30, 60].find((m) => (per10 * m) / 10 >= 6) ?? 60;
+  const labelMin = [30, 60, 120, 180].find((m) => (per10 * m) / 10 >= 56) ?? 180;
+  return { dotMin, labelMin };
+}
+
+/** The bearing label step: the finest of 10°, 15°, 45°, 90° with labels 34 px apart. */
+export function bearingStep(width: number, fovDeg: number): number {
+  return [10, 15, 45, 90].find((b) => (b * width) / fovDeg >= 34) ?? 90;
+}
+
+const PAD_B = 16;
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
 const COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
 
 export function renderSkylineView(s: CircleSkyline, path: SkyPath, o: ViewOptions): string {
   const { width: W, height: H, centreDeg: c, fovDeg: fov } = o;
-  const padB = 16;
+  const padB = PAD_B;
   const x = (az: number) => W / 2 + (relDeg(az, c) / fov) * W;
   const inView = (az: number) => Math.abs(relDeg(az, c)) <= fov / 2 + 1;
   const n = s.angles.length;
   const step = 360 / n;
-  const visible: number[] = [];
-  for (let i = 0; i < n; i++) if (inView(i * step) && Number.isFinite(s.angles[i])) visible.push(s.angles[i]);
-  const yMin = Math.min(-2, ...visible.map((a) => a - 0.5));
-  const yMax = Math.min(35, Math.max(10, ...visible.map((a) => a + 4)));
+  const { yMin, yMax } = viewRange(s, c, fov);
+  const cad = pathCadence(path, o, yMin, yMax);
   const y = (alt: number) => (H - padB) * (1 - (alt - yMin) / (yMax - yMin));
   const parts: string[] = [];
 
@@ -122,7 +207,7 @@ export function renderSkylineView(s: CircleSkyline, path: SkyPath, o: ViewOption
     }
     const top = y(a);
     parts.push(
-      `<rect x="${cx.toFixed(1)}" y="${top.toFixed(1)}" width="${(colW + 0.6).toFixed(1)}" height="${(H - padB - top).toFixed(1)}" class="${s.what[i] === "lidar" ? "lidar" : "ridge"}"/>`
+      `<rect x="${cx.toFixed(1)}" y="${top.toFixed(1)}" width="${(colW + 0.6).toFixed(1)}" height="${(H - padB - top).toFixed(1)}" class="${s.what[i] === "lidar" ? "lidar" : o.shortReach?.[i] ? "ridge short" : "ridge"}"/>`
     );
   }
 
@@ -130,24 +215,36 @@ export function renderSkylineView(s: CircleSkyline, path: SkyPath, o: ViewOption
   // and a time every half hour.
   let d = "";
   let pen = false;
+  let lastX = 0;
   for (const p of path.points) {
     if (!inView(p.azDeg) || p.altDeg < yMin - 2) {
       pen = false;
       continue;
     }
-    d += `${pen ? "L" : "M"}${x(p.azDeg).toFixed(1)},${y(p.altDeg).toFixed(1)}`;
+    const px = x(p.azDeg);
+    // On the whole circle the path can cross the back bearing: lift the pen there.
+    if (pen && Math.abs(px - lastX) > W / 2) pen = false;
+    d += `${pen ? "L" : "M"}${px.toFixed(1)},${y(p.altDeg).toFixed(1)}`;
     pen = true;
+    lastX = px;
   }
   if (d) parts.push(`<path d="${d}" class="path" stroke="${o.colour}"/>`);
+  // Times give way to one already drawn where the arc bunches up (its top on a wide view).
+  const boxes: [number, number, number, number][] = [];
+  const free = (x0: number, y0: number, w: number) => !boxes.some(([bx, by, bw]) => x0 < bx + bw && bx < x0 + w && Math.abs(y0 - by) < 14);
   for (const p of path.points) {
-    if (!inView(p.azDeg) || p.time.getMinutes() % 10 !== 0 || p.time.getSeconds() > 0) continue;
+    const mod = p.time.getHours() * 60 + p.time.getMinutes();
+    if (!inView(p.azDeg) || mod % cad.dotMin !== 0 || p.time.getSeconds() > 0) continue;
     const px = x(p.azDeg);
     const py = y(p.altDeg);
     if (py < 0 || py > H - padB) continue;
     parts.push(`<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="1.8" fill="${o.colour}"/>`);
-    const nearMeet = o.meet && Math.abs(+p.time - +o.meet.time) < 12 * 60_000;
-    if (p.time.getMinutes() % 30 === 0 && !nearMeet) {
-      parts.push(`<text x="${(px + 4).toFixed(1)}" y="${(py - 4).toFixed(1)}" class="tick">${esc(o.fmt(p.time))}</text>`);
+    const nearMeet = o.meet && Math.abs(+p.time - +o.meet.time) < cad.labelMin * 0.4 * 60_000;
+    const label = o.fmt(p.time);
+    const lw = label.length * 6.2;
+    if (mod % cad.labelMin === 0 && !nearMeet && free(px + 4, py - 4, lw)) {
+      boxes.push([px + 4, py - 4, lw, 0]);
+      parts.push(`<text x="${(px + 4).toFixed(1)}" y="${(py - 4).toFixed(1)}" class="tick">${esc(label)}</text>`);
     }
   }
 
@@ -178,10 +275,13 @@ export function renderSkylineView(s: CircleSkyline, path: SkyPath, o: ViewOption
 
   // Bearings: every 10°, a compass letter on the 45s.
   const left = c - fov / 2;
-  for (let b = Math.ceil(left / 10) * 10; b <= c + fov / 2; b += 10) {
+  const bs = bearingStep(W, fov);
+  for (let b = Math.ceil(left / bs) * bs; b <= c + fov / 2; b += bs) {
     const nb = ((b % 360) + 360) % 360;
+    const bx = W / 2 + ((b - c) / fov) * W;
+    if (bx < 8 || bx > W - 8) continue; // half off the edge
     const label = nb % 45 === 0 ? COMPASS[nb / 45] : `${nb}°`;
-    parts.push(`<text x="${x(b).toFixed(1)}" y="${H - 3}" class="bearing${nb % 45 === 0 ? " cardinal" : ""}" text-anchor="middle">${label}</text>`);
+    parts.push(`<text x="${bx.toFixed(1)}" y="${H - 3}" class="bearing${nb % 45 === 0 ? " cardinal" : ""}" text-anchor="middle">${label}</text>`);
   }
 
   return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Skyline from the pin, facing ${Math.round(((c % 360) + 360) % 360)}°">${parts.join("")}</svg>`;

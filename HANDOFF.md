@@ -6,7 +6,7 @@
 
 **State:** `main` is live: a place search in Setup's Where row (type a name and press Find, or paste coordinates; names from Photon, one request per Find, `src/search/place.ts`, *Place search* in `docs/design.md`; with Photon unreachable, Find says the search didn't answer and the rest of the page works), terrain read fine near the pin and coarser far out (*Loading faster*), Salida lidar and the skyline strip, the eye-height slider to 20 ft, skyline first, and lidar streamed from USGS (`docs/design.md`). The Salida bake is committed in `public/lidar/salida/` (2.3 MB, seven files) and ships with the page; rebuild it with `scripts/lidar/README.md`. Colours meet the contrast floor: chosen chip #2262b0 light / #1964be dark, muted grey #74726d light / #898781 dark, and the sources line is 24 px tall.
 
-**Next:** Jimmy picks from *Proposed: what comes next* in `docs/design.md` (roads coloured by when it clears, the circle past 600 m, baking the valley, map layers). Nothing there is built.
+**Next:** the wider strip (*The strip, wider* in `docs/design.md`: opens on the whole event, zooms 30° to 360°, a flat chart at every width) is a demo on branch `reckon/1074`, waiting on Jimmy's look before it merges. Then Jimmy picks from *Proposed: what comes next* in `docs/design.md` (roads coloured by when it clears, the circle past 600 m, baking the valley, map layers). Nothing there is built.
 
 **Decided:** rings 75/150/300/600 m; nodes down to ~1.4 m point spacing; ground from the flight's own class-2 points (no bare-ground model when streaming); the circle colours only completed rings. The Salida tiles stay on Pages, not R2: they are small and read whole, and the one R2 bucket is sprawl's.
 

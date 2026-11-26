@@ -15,7 +15,12 @@
   <body>
     <section id="view">
       <div id="reading" role="status"></div>
-      <div id="strip" aria-label="Skyline from the pin: drag to look around, tap to name what is there"></div>
+      <div id="strip-wrap">
+        <div id="strip" aria-label="Skyline from the pin: drag to look around, pinch to zoom, tap to name what is there"></div>
+        <div id="zoom" role="group" aria-label="How wide the strip looks">
+          <button id="zoom-out" type="button" aria-label="Wider">−</button><span id="zoom-val">70°</span><button id="zoom-in" type="button" aria-label="Closer">+</button>
+        </div>
+      </div>
       <div id="blocker"></div>
       <div id="stream" aria-live="polite"></div>
       <div id="view-bar">

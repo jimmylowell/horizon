@@ -181,10 +181,27 @@ After:
 ### The strip, looked around
 
 1. **The whole circle.** The skyline is marched on 720 bearings, every half degree. Toward the event, ±30° of the path, the rays run 120 km as now; the rest of the circle runs 30 km, the reach the old sky ring used, because fetching terrain tiles 120 km out in every direction is about ten times as many tiles for ridges that sit far below the near ones.
-2. **The view is 70° wide** at a time, about what a phone's camera sees across, and opens centred on where the sun or moon meets the skyline. Drag sideways to turn; a button brings it back to the event.
-3. **Compass points** N, NE, E … along the bottom, and the bearing every 10°.
+2. **The view opens wide enough to hold the event**, centred on where the sun or moon meets the skyline, and can be zoomed from 30° out to the whole circle (*The strip, wider*). Drag sideways to turn; *Face the sunset* (or rise, moonrise, moonset) brings back the opening view.
+3. **Compass points** N, NE, E … along the bottom, and the bearing every 10°, 15°, 45° or 90°, whichever is the closest that keeps the labels apart at that width.
 4. **The sun's or moon's path is drawn wherever it is in view**, the whole day's arc above the horizon, not only the stretch near the event, with a dot every ten minutes and a time every half hour, and the disc at the moment it meets the skyline, as before.
 5. **Following the compass.** On a phone that gives a heading (iOS `webkitCompassHeading`, others `deviceorientationabsolute`), a *Compass* button turns the strip as he turns. iOS asks permission on the tap. Where no heading comes, the button says so and drag stays.
+
+### The strip, wider
+
+Jimmy, in a session, 2026-11-26: "A wider focal point was also something I was thinking about using with the LiDAR scans to be able to zoom out and see more of the ridge line." And of the Street View mockup the same day: "Ideally, you don't need to drag around. The photo shows you what it's going to look like, and you decide or you leave." Read here as a wider angle of view, as a control on the strip, not a new screen.
+
+1. **It opens on the whole event.** The opening width holds the path from an hour before the sun or moon meets the skyline to an hour after (only the part above 3° under the horizon), with 8° spare each side, rounded up to 10°, never under 70° and never over the whole circle. For a set that is the approach and the stretch behind the ridge down to the flat set; for a rise, the stretch from the flat rise behind the ridge and the climb once clear. Most events then need no drag at all.
+2. **A zoom on the strip itself**: a small *− 120° +* in its top right corner, through 30°, 50°, 70°, 100°, 140°, 200°, 280° and 360°. On a phone, two fingers pinch it; on a computer, the wheel over the strip zooms. Drag still turns it at every width, the whole circle too (it moves which bearing is in the middle). *Face the event* puts back the opening width and bearing.
+3. **What kind of drawing it is, and stays.** The strip is a flat chart: across is bearing, evenly, a degree the same width everywhere; up is the angle above level, evenly. A camera picture is not like that: it stretches toward its edges and cannot show 180° at all. So the strip never stretches at the edges, at any width, and the whole circle is just a wider strip with the back bearing at both ends. What does change with width is how steep it looks: the height scale is set by the skyline in view, the bearing scale by the width, so zooming out draws hills steeper against their width. The key says by how much ("heights ×6"), so a sharp-looking ridge on the whole circle is read for what it is.
+4. **Everything on it stays true at every width.** The lidar roofs and trees, the terrain ridge, the compass points and the path are the same marched skyline and the same path, only spaced differently; nothing is smoothed or left out. Where the columns are under a pixel wide each, the browser blends them; the tallest still shows. The path's dots go from every 10 minutes to every 20, 30 or 60 when they would sit closer than 6 px, and its times from every half hour to every hour, two or three, when they would sit closer than 56 px, and a time that would overlap one already drawn (the top of the arc on a wide view) is left out; the key says the dot spacing when it is not 10 minutes.
+5. **The far ridge is honest about its reach.** Toward the event the ridge is read 120 km out; the rest of the circle 30 km (*The strip, looked around*). The 120 km sector covers the opening width, with 10° to spare each side, as well as ±30° of the event. A wide view shows the rest of the circle too, and those bearings are drawn a shade lighter, with "lighter: read to 30 km" in the key, since a ridge further out would be missing there.
+6. **Tap still names** what is at the tapped bearing, at any width.
+
+Not done: the width is not in the shared link (the link opens on the event, at its opening width); a camera-like (stretched) view.
+
+Sources: as in *The strip, looked around*. The opening's hour either side, the 8° and 10° spares, the zoom steps and the 6 px and 56 px spacings are choices, not sourced numbers.
+
+How Jimmy will know it is right: the strip opens with the disc, the ridge it meets and the rest of the path in one view; *−* down to 360° shows the whole ridge line round Salida with the Sawatch and the Arkansas Hills in the right places by the compass letters; the same roof or ridge is under the same bearing label at 70° and at 360°.
 
 ### What is in the way
 
@@ -208,7 +225,7 @@ Once the pin is down, the map round it colours itself by how late the sun stays 
 
 Not done: a 3D view; telling roofs from trees, which the flight does not record; buildings outside Salida in the overlay (Overpass for a 3 km square is too slow, *In town*).
 
-Sources: as in *Lidar in town* and *In town*; heading from the browser's [DeviceOrientationEvent](https://developer.mozilla.org/en-US/docs/Web/API/DeviceOrientationEvent) (MDN). The 70° view, the 30 km reach behind, the 400 m and 3 km overlay sizes and the 20 m spacing are choices, not sourced numbers.
+Sources: as in *Lidar in town* and *In town*; heading from the browser's [DeviceOrientationEvent](https://developer.mozilla.org/en-US/docs/Web/API/DeviceOrientationEvent) (MDN). The 70° floor of the opening width, the 30 km reach behind, the 400 m and 3 km overlay sizes and the 20 m spacing are choices, not sourced numbers.
 
 How Jimmy will know it is right: standing on F Street, turning with the phone, the strip turns with him and the roofs and ridge on it line up with what he sees; tapping the roof the sun will drop behind names the building he is looking at.
 
