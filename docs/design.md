@@ -20,7 +20,7 @@ Someone outside on a nice evening asking "where should I go right now to watch i
 
 ## What it does not do
 
-- No backend, no account, no API key: everything runs in the browser against public services.
+- No backend, no account: everything runs in the browser against public services. The Street View screen is the one part that uses Google (*Street View*).
 - No weather or cloud forecast; it answers "can I see the horizon", not "will it be clear".
 - No routing; each spot has a *Directions* link out to Google Maps.
 - No promise about trees outside Salida: the elevation model is a surface model, so a spot inside forest is penalized and flagged by `data/landcover-rules.json`, not modelled. In Salida the lidar measures them (*Lidar in town*).
@@ -65,6 +65,7 @@ All fetched live by the browser; nothing is baked into the repo except the three
 | USGS 3D Elevation Program lidar on AWS, [registry.opendata.aws/usgs-lidar](https://registry.opendata.aws/usgs-lidar/), Entwine copies by Hobu; flight index from [hobuinc/usgs-lidar](https://github.com/hobuinc/usgs-lidar) | Points of the flight over the pin, streamed (*Lidar from USGS, live*) | Browser fetch from `s3-us-west-2.amazonaws.com/usgs-lidar-public/<flight>/`, unpacked with laz-perf in the worker | Ground from the flight's own ground points; 600 m round the pin; 9 MB to 150 m, 38 MB to 600 m in Salida | Same pin, baked and streamed side by side: same reading, Behind the ridge ~4:26 PM |
 | [astronomy-engine](https://github.com/cosinekitty/astronomy), Don Cross, MIT | Rise and set times and azimuths for sun and moon | npm package, runs offline in the browser (`src/astro.ts`) | — | Not checked against a published almanac in this repo |
 | [Photon](https://github.com/komoot/photon), komoot, Apache-2.0, over OpenStreetMap data (ODbL); public server [photon.komoot.io](https://photon.komoot.io) | Place names for the search in Setup | `photon.komoot.io/api/?q=…&lat=…&lon=…`, one request per search sent, never as you type (`src/search/place.ts`) | The public server asks for fair use and throttles heavy users; no promise it stays up. Names are only what OpenStreetMap holds | "herks" near Salida, 2026-11-24: Herks Werks first |
+| Google Street View, Google, under the [Google Maps Platform Terms](https://cloud.google.com/maps-platform/terms) | The street-car panorama nearest the pin, and its photo, on the Street View screen only | Panorama lookup: Maps JavaScript API `StreetViewService.getPanorama`; photo: the Maps Embed iframe, `google.com/maps/embed?pb=…` (`src/street/`) | Terms 3.2.3(e): no Street View on a screen with a non-Google map, so that screen has no map. Lookup runs keyless in Google's development mode; the photo's date is Google's `imageDate`, a month | At Herks Werks the skyline drawn from the terrain sits on the mountains in all three frames |
 | [OpenFreeMap](https://openfreemap.org/), OSM data | Basemap tiles and the landcover layer the forest check reads | `tiles.openfreemap.org/styles/liberty` | — | — |
 | [MapLibre GL JS](https://maplibre.org/), BSD-3-Clause | The map | npm package | — | — |
 
@@ -273,6 +274,40 @@ Measured 2026-11-24, headless Chrome at 390 × 844, 12 Mbit/s down and 60 ms lat
 | F Street, Salida (38.53470, −105.99890), baked lidar | 15.3 s → 8.7 s | 15.6 MB → 4.0 MB | — | ~6:24 → ~6:23 PM, +107 min |
 
 The lidar is now most of what a pin downloads outside Salida. Starting the stream only once the terrain skyline is in would take at most a second off the first answer at this speed and delay the lidar by as much, so it is not done.
+
+## Street View
+
+Jimmy, in a session on 2026-11-25 and 26, after three mockups: "This is pretty freaking cool." "The street view is what does it, giving the ridge line and the outlines of moon and sun path." "Yeah no way I want to pay that." "Ideally, you don't need to drag around. The photo shows you what it's going to look like, and you decide or you leave."
+
+A second screen, `street.html`, opened from the main page with a pin down by **Street View** in the view bar. It carries the pin and the date (`street.html?back=<main link>#lat,lon,date`); **Back** returns to the main page as it was. The screen has no map: the Google Maps Platform Terms, section 3.2.3(e), forbid Street View imagery on a screen with a non-Google map.
+
+```
+┌────────────── 390 ──────────────┐
+│ [☾ up 4:55 PM][☀ down 3:58 PM]… │  chips: the day's crossings
+│ ┌─────────┬─────────┬─────────┐ │
+│ │ Street  │  View,  │ locked  │ │  three frames side by side
+│ │  ··☾··  │ ridge ~~│~~~~~~   │ │  skyline, sun and moon paths
+│ └─────────┴─────────┴─────────┘ │
+│ Google Street View, July 2023 · │  the photo's month, a link out
+│ 4:55 PM ━━━━━━━○━━━━━━━━━━━━━   │  one time slider
+│ [date][Now][Step NE][Step SW][Back][?]
+└─────────────────────────────────┘
+```
+
+1. **The panorama.** The nearest Google street-car panorama within 600 m of the pin: `StreetViewService.getPanorama` with `radius: 600`, `preference: nearest`, `sources: ['google']`, which skips indoor tours (the first one found at Herks Werks was an indoor wine-cellar tour). With none, the screen says so and sends him back to the skyline strip. **Step** buttons, one per road link of the panorama, move to the next one along the road, and the skyline is read again from there.
+2. **The picture is three locked frames**, side by side, 40° each at 700 px wide and over, 30° below. Never dragged. Three narrow views instead of one wide one, because one wide perspective frame stretches its edges; at the joins straight lines bend a little and the skyline does not jump. Each frame is the keyless Maps Embed iframe, `https://www.google.com/maps/embed?pb=!4v1732500000000!6m8!1m7!1s<pano>!2m2!1d<lat>!2d<lon>!3f<heading>!4f<pitch>!5f<zoom>` (pitch up positive), rendered 640 px wide plus 170 px each side that is cut off, where Google draws its address box and buttons, then scaled to fit. Pitch is 0.
+3. **The geometry, measured in the session and kept under test** (`src/street/geometry.test.ts`): the embed's focal length in pixels is max(width/2 × 2^(zoom−1), height/2), so the zoom for a frame is the one whose focal length puts the frame's angle across the 640 px kept; with pitch 0 the frames meet exactly at the joins. A point at bearing *a* off a frame's centre and altitude *h* lands at x = f·tan *a*, y = f·tan *h* / cos *a* from the frame's centre.
+4. **Over it**, drawn per frame: the terrain skyline from the panorama's spot, eye 2.5 m (the street car's camera, roughly), read by the same worker and terrain ladder as the strip (`src/elevation`), 120 km out on all 720 bearings, terrain only; and the whole day's sun and moon paths from `src/astro.ts`, a dot each hour, solid above the skyline and faint below, the discs true size at the slider's time.
+5. **Chips** for sun up, sun down, moon up and moon down over the skyline that day (device time zone, midnight to midnight), each with the minutes late or early against a flat horizon (the flat time is `eventTimeAt`, the strip's). Up and down are the top edge meeting the skyline, the page's one definition. A tap frames the picture on it: the crossing a third of the way in, the path across the rest, and the slider jumps to it. One time slider, the date, **Now**.
+6. **Under the picture**: "Google Street View" with the photo's month, and a link that opens the same panorama in Google Maps.
+
+**Not live yet.** Google's credit line is partly cut by the crop, and the lookup runs keyless in Google's development mode. Both change once there is a free Maps Embed key (no charge, per Google's [Maps Embed usage and billing](https://developers.google.com/maps/documentation/embed/usage-and-billing)), which is waiting on Jimmy.
+
+Not done: roofs and trees on the picture (the photo shows them; the lidar is not marched here); dragging; any map.
+
+Sources: as in *Data sources*. The 600 m, 2.5 m eye, 40°/30° frames, 640 + 2 × 170 px and the third-of-the-way framing are choices, not sourced numbers.
+
+How Jimmy will know it is right: at Herks Werks on 2026-11-24 the moon chip reads up about 4:55 PM, the pink line sits on the mountains in all three frames, and the moon comes up where the photo shows the ridge it clears.
 
 ## Proposed: what comes next
 

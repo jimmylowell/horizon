@@ -136,6 +136,7 @@ body {
   gap: 6px;
 }
 #view-bar button,
+#view-bar a,
 #setup button {
   border: 1px solid var(--hairline);
   background: var(--surface-raised);
@@ -146,6 +147,10 @@ body {
   cursor: pointer;
   white-space: nowrap;
 }
+#view-bar a {
+  text-decoration: none;
+  font-family: inherit;
+}
 #compass[aria-pressed="true"] {
   background: var(--accent);
   border-color: var(--accent);
@@ -153,6 +158,12 @@ body {
 }
 #setup-open {
   margin-left: auto;
+  min-width: 0;
+  display: flex;
+  white-space: pre;
+}
+/* With Street View in the bar too, the summary gives way and "Setup" stays. */
+#setup-sum {
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
