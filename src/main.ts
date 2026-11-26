@@ -13,7 +13,7 @@ import { EVENT_KINDS, bodyPosition, nextEvents, obstructionEffect, type EventKin
 import { flatDistanceM, type LatLon } from "./geo";
 import { repairBasemapStyle } from "./render/basemap";
 import { clearHeatmap, renderHeatmap, type ScorePoint } from "./render/heatmap";
-import { circleAzimuths, pathMeets, rayIndex, relDeg, renderSkylineView, type CircleSkyline, type PathPoint, type SkyPath } from "./render/view";
+import { FOV_MAX, FOV_MIN, circleAzimuths, openingView, pathMeets, rayIndex, relDeg, renderSkylineView, steepness, viewRange, pathCadence, zoomStep, type CircleSkyline, type PathPoint, type SkyPath } from "./render/view";
 import { fetchBuildingsBox, type BuildingGrid, type Box } from "./search/buildings";
 import { nameSkylinePoints } from "./search/horizonFeature";
 import { lidarTownAt } from "./search/lidar";
@@ -103,6 +103,9 @@ const stripEl = $("strip");
 const blockerEl = $("blocker");
 const toEventBtn = $("to-event") as HTMLButtonElement;
 const compassBtn = $("compass") as HTMLButtonElement;
+const zoomOutBtn = $("zoom-out") as HTMLButtonElement;
+const zoomInBtn = $("zoom-in") as HTMLButtonElement;
+const zoomVal = $("zoom-val");
 const setupEl = $("setup");
 const setupOpenBtn = $("setup-open") as HTMLButtonElement;
 const setupSum = $("setup-sum");
@@ -316,7 +319,25 @@ let picked: number | null = null;
 /** OpenStreetMap's name for what the path meets, once asked. */
 let meetName: string | null = null;
 let skySeq = 0;
-const FOV_DEG = 70;
+/** Degrees across the strip: opens on the whole event, zoomed 30° to 360° (*The strip, wider*). */
+let fovDeg = 70;
+
+/** Face the event at its opening width. */
+function openOnEvent(ev: SkyEvent): void {
+  if (meet && path) {
+    const o = openingView(path, meet.point);
+    fovDeg = o.fovDeg;
+    facing = o.centreDeg;
+  } else {
+    fovDeg = 70;
+    facing = ev.azimuthDeg;
+  }
+}
+
+function setFov(f: number): void {
+  fovDeg = Math.max(FOV_MIN, Math.min(FOV_MAX, f));
+  requestAnimationFrame(drawView);
+}
 
 function viewHeight(): number {
   return Math.round(Math.max(170, Math.min(340, window.innerHeight * 0.36)));
@@ -326,19 +347,27 @@ function drawView(): void {
   const ev = state.events[state.kind];
   if (!sky || !path || !ev) return;
   const W = Math.max(280, Math.round(stripEl.clientWidth || 360));
+  const win = { width: W, height: viewHeight(), centreDeg: facing, fovDeg };
+  const short = sky.reachM.map((m) => m < EVENT_REACH_M);
+  const shortInView = short.some((v, i) => v && Math.abs(relDeg(i * (360 / short.length), facing)) <= fovDeg / 2);
+  const steep = steepness(sky, win);
+  const { yMin, yMax } = viewRange(sky, facing, fovDeg);
+  const dots = pathCadence(path, win, yMin, yMax).dotMin;
+  zoomVal.textContent = `${Math.round(fovDeg)}°`;
+  zoomOutBtn.disabled = fovDeg >= FOV_MAX;
+  zoomInBtn.disabled = fovDeg <= FOV_MIN;
+  const scale = ` · ${Math.round(fovDeg)}° across, heights ×${steep < 1.5 ? steep.toFixed(1) : Math.round(steep)}${dots !== 10 ? `, a dot every ${dots} min` : ""}${shortInView ? ` · <span class="k ridge short"></span>lighter: read to ${BEHIND_M / 1000} km` : ""}`;
   stripEl.innerHTML =
     renderSkylineView(sky, path, {
-      width: W,
-      height: viewHeight(),
-      centreDeg: facing,
-      fovDeg: FOV_DEG,
+      ...win,
+      shortReach: short,
       colour: PATH_COLOURS[state.kind],
       fmt: (d) => timeFmt.format(d),
       meet: meet && !meet.unknown ? meet.point : null,
       picked,
       now: new Date(),
     }) +
-    `<div class="strip-key">${sky.r.lidar ? `<span class="k ridge"></span>ridge <span class="k lidar"></span>roofs and trees, USGS lidar${streaming() ? `, streamed to ${live.reachM} m` : ""}` : streaming() ? `<span class="k ridge"></span>ridge · lidar on its way` : flight ? `<span class="k ridge"></span>ridge · no lidar here` : lidarTownAt(sky.loc) ? `<span class="k ridge"></span>ridge · lidar didn't load` : `<span class="k ridge"></span>ridge · no roofs or trees outside Salida`} · drag to look round, tap to name</div>`;
+    `<div class="strip-key">${sky.r.lidar ? `<span class="k ridge"></span>ridge <span class="k lidar"></span>roofs and trees, USGS lidar${streaming() ? `, streamed to ${live.reachM} m` : ""}` : streaming() ? `<span class="k ridge"></span>ridge · lidar on its way` : flight ? `<span class="k ridge"></span>ridge · no lidar here` : lidarTownAt(sky.loc) ? `<span class="k ridge"></span>ridge · lidar didn't load` : `<span class="k ridge"></span>ridge · no roofs or trees outside Salida`}${scale} · drag to turn, pinch to zoom, tap to name</div>`;
 }
 
 function renderReading(note?: string): void {
@@ -396,7 +425,11 @@ async function readSkyline(soft = false): Promise<void> {
   const azimuths = circleAzimuths();
   // The event side reaches far; behind, a shorter reach keeps the tiles few.
   const centre = meetGuess(path, ev);
-  const reachM = azimuths.map((az) => (Math.abs(relDeg(az, centre)) <= EVENT_SIDE_DEG ? EVENT_REACH_M : BEHIND_M));
+  // The far reach also covers the width the strip opens at (*The strip, wider*).
+  const guessMeet = path.points.reduce<PathPoint | null>((b, q) => (!b || Math.abs(q.altDeg - 3) < Math.abs(b.altDeg - 3) ? q : b), null);
+  const open = guessMeet ? openingView(path, guessMeet) : null;
+  const farHalf = open && open.fovDeg < FOV_MAX ? Math.max(EVENT_SIDE_DEG, open.fovDeg / 2 + Math.abs(relDeg(open.centreDeg, centre)) + 10) : EVENT_SIDE_DEG;
+  const reachM = azimuths.map((az) => (Math.abs(relDeg(az, centre)) <= farHalf ? EVENT_REACH_M : BEHIND_M));
   try {
     const reply = await askWorker<"skylineResult">({
       type: "skyline",
@@ -415,7 +448,7 @@ async function readSkyline(soft = false): Promise<void> {
     sky = { angles: reply.result.angles, what: reply.result.what, r: reply.result, loc, reachM };
     const m = pathMeets(sky, path);
     meet = m ? { point: m.unknown ? m.point : refineMeet(sky, path, m.index), unknown: m.unknown } : null;
-    facing = meet ? meet.point.azDeg : ev.azimuthDeg;
+    if (!soft) openOnEvent(ev);
     renderReading();
     drawView();
     if (meet && !meet.unknown && !soft) void nameAt(meet.point.azDeg, true);
@@ -509,21 +542,42 @@ async function nameAt(azDeg: number, atMeet: boolean): Promise<void> {
 
 // Drag to look round; a tap names what is there.
 let drag: { x: number; facing: number; moved: boolean } | null = null;
+// Two fingers on the strip pinch the width.
+const fingers = new Map<number, number>();
+let pinch: { dist: number; fov: number } | null = null;
 stripEl.addEventListener("pointerdown", (e) => {
   if (!sky) return;
-  drag = { x: e.clientX, facing, moved: false };
+  fingers.set(e.pointerId, e.clientX);
   stripEl.setPointerCapture(e.pointerId);
+  if (fingers.size === 2) {
+    const [a, b] = [...fingers.values()];
+    pinch = { dist: Math.max(20, Math.abs(a - b)), fov: fovDeg };
+    drag = null;
+    return;
+  }
+  drag = { x: e.clientX, facing, moved: false };
 });
+const lift = (e: PointerEvent) => {
+  fingers.delete(e.pointerId);
+  if (fingers.size < 2) pinch = null;
+};
 stripEl.addEventListener("pointermove", (e) => {
+  if (fingers.has(e.pointerId)) fingers.set(e.pointerId, e.clientX);
+  if (pinch && fingers.size === 2) {
+    const [a, b] = [...fingers.values()];
+    setFov((pinch.fov * pinch.dist) / Math.max(20, Math.abs(a - b)));
+    return;
+  }
   if (!drag) return;
   const dx = e.clientX - drag.x;
   if (Math.abs(dx) > 6) drag.moved = true;
   if (!drag.moved) return;
   stopCompass();
-  facing = (((drag.facing - (dx / stripEl.clientWidth) * FOV_DEG) % 360) + 360) % 360;
+  facing = (((drag.facing - (dx / stripEl.clientWidth) * fovDeg) % 360) + 360) % 360;
   requestAnimationFrame(drawView);
 });
 stripEl.addEventListener("pointerup", (e) => {
+  lift(e);
   if (!drag) return;
   const tap = !drag.moved;
   drag = null;
@@ -531,18 +585,32 @@ stripEl.addEventListener("pointerup", (e) => {
   const svg = stripEl.querySelector("svg");
   if (!svg) return;
   const r = svg.getBoundingClientRect();
-  const az = (((facing + ((e.clientX - r.left) / r.width - 0.5) * FOV_DEG) % 360) + 360) % 360;
+  const az = (((facing + ((e.clientX - r.left) / r.width - 0.5) * fovDeg) % 360) + 360) % 360;
   picked = az;
   drawView();
   void nameAt(az, false);
 });
-stripEl.addEventListener("pointercancel", () => (drag = null));
+stripEl.addEventListener("pointercancel", (e) => {
+  lift(e);
+  drag = null;
+});
+stripEl.addEventListener(
+  "wheel",
+  (e) => {
+    if (!sky) return;
+    e.preventDefault();
+    setFov(fovDeg * Math.exp(e.deltaY * 0.002));
+  },
+  { passive: false }
+);
+zoomOutBtn.addEventListener("click", () => setFov(zoomStep(fovDeg, 1)));
+zoomInBtn.addEventListener("click", () => setFov(zoomStep(fovDeg, -1)));
 
 toEventBtn.addEventListener("click", () => {
   const ev = state.events[state.kind];
   if (!ev) return;
   stopCompass();
-  facing = meet ? meet.point.azDeg : ev.azimuthDeg;
+  openOnEvent(ev);
   picked = null;
   drawView();
   if (meet && !meet.unknown) void nameAt(meet.point.azDeg, true);

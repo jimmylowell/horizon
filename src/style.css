@@ -81,6 +81,7 @@ body {
   border-radius: 8px;
 }
 #strip .ridge { fill: #141a26; }
+#strip .ridge.short { fill: #2a3246; }
 #strip .lidar { fill: #2f5a3c; }
 #strip .unknown { fill: #666; opacity: 0.5; }
 #strip .flat { stroke: #ffffff55; stroke-dasharray: 3 3; }
@@ -96,6 +97,32 @@ body {
 .strip-key .k { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: -1px; margin: 0 3px 0 0; }
 .strip-key .k.ridge { background: #141a26; }
 .strip-key .k.lidar { background: #2f5a3c; margin-left: 6px; }
+.strip-key .k.ridge.short { background: #2a3246; }
+
+/* The zoom, in the strip's top right corner (*The strip, wider*). */
+#strip-wrap { position: relative; }
+#zoom {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  background: #0d1220cc;
+  border-radius: 14px;
+  color: #e8ecf4;
+  font: 12px system-ui, sans-serif;
+}
+#zoom button {
+  width: 32px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: 18px/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+#zoom button:disabled { opacity: 0.35; cursor: default; }
+#zoom-val { min-width: 34px; text-align: center; }
 
 #blocker {
   font-size: 14px;
