@@ -219,6 +219,37 @@ body {
 .setup-row .lab { flex: none; width: 3.6em; color: var(--text-2); font-size: 14px; }
 .setup-row .val { color: var(--text-2); font-size: 14px; }
 #locate { margin-left: 4px; }
+.setup-sub { border-top: 0; padding-top: 0; }
+#place {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--hairline);
+  background: var(--surface-raised);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font: 16px system-ui, sans-serif; /* 16 px or phones zoom in on focus */
+}
+#place-results { margin: 0 0 4px 4.4em; }
+#place-results[hidden] { display: none; }
+#place-results button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-top: 1px solid var(--hairline);
+  background: none;
+  color: var(--text);
+  padding: 8px 2px;
+  min-height: 44px;
+  font: 14px system-ui, sans-serif;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+#place-results button:first-child { border-top: 0; }
+#place-results .where { display: block; color: var(--text-2); font-size: 13px; }
+#place-results .note { color: var(--text-2); font-size: 14px; padding: 8px 2px; }
 #date {
   border: 1px solid var(--hairline);
   background: var(--surface-raised);

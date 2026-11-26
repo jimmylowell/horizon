@@ -20,6 +20,7 @@ import { lidarTownAt } from "./search/lidar";
 import { EPT_ROOT, findFlight, type FlightRow } from "./search/flights";
 import type { StreamProgress } from "./search/stream";
 import { footprintHolding } from "./search/blocker";
+import { findPlaces, parseLatLon, type Place } from "./search/place";
 import type { OverlayPoint, SkylineResult, WorkerMessage, WorkerRequest } from "./search/worker";
 
 // ---------- state ----------
@@ -712,6 +713,52 @@ function openSetup(open: boolean): void {
 setupOpenBtn.addEventListener("click", () => openSetup(setupEl.hidden));
 $("setup-close").addEventListener("click", () => openSetup(false));
 $("locate").addEventListener("click", () => geolocate.trigger());
+
+// ---------- place search (docs/design.md, *Place search*) ----------
+
+const placeInput = $("place") as HTMLInputElement;
+const placeResults = $("place-results");
+let placeAbort: AbortController | null = null;
+function goTo(p: LatLon & { name?: string }): void {
+  if (p.name) placeInput.value = p.name;
+  placeResults.hidden = true;
+  placeInput.blur();
+  setLocation(p, true);
+}
+function placeNote(text: string): void {
+  placeResults.innerHTML = `<div class="note">${escapeHtml(text)}</div>`;
+  placeResults.hidden = false;
+}
+$("place-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const q = placeInput.value.trim();
+  if (!q) return;
+  const ll = parseLatLon(q);
+  if (ll) return goTo(ll);
+  placeAbort?.abort();
+  const ctl = (placeAbort = new AbortController());
+  placeNote("Searching…");
+  const c = map.getCenter();
+  let found: Place[];
+  try {
+    found = await findPlaces(q, { lat: c.lat, lon: c.lng }, ctl.signal);
+  } catch (err) {
+    if (ctl.signal.aborted) return;
+    console.error(err);
+    return placeNote("The place search didn't answer. Try again, or tap the map.");
+  }
+  if (ctl !== placeAbort) return;
+  if (!found.length) return placeNote(`Nothing found for “${q}”.`);
+  if (found.length === 1) return goTo(found[0]);
+  placeResults.innerHTML = found
+    .map((p, i) => `<button type="button" data-i="${i}">${escapeHtml(p.name)}<span class="where">${escapeHtml(p.where)}</span></button>`)
+    .join("");
+  placeResults.hidden = false;
+  placeResults.onclick = (ev) => {
+    const btn = (ev.target as HTMLElement).closest("button");
+    if (btn) goTo(found[Number(btn.dataset.i)]);
+  };
+});
 
 dateInput.min = todayStr();
 dateInput.value = state.date || todayStr();

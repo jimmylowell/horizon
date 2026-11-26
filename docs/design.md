@@ -64,6 +64,7 @@ All fetched live by the browser; nothing is baked into the repo except the three
 | USGS 3D Elevation Program: lidar point cloud CO_SanLuisJuanMiguel_2020_D20 and its 1 m bare-ground model, [ScienceBase 608cc5ed…](https://www.sciencebase.gov/catalog/item/608cc5edd34e93746a6fe435), [6217206a…](https://www.sciencebase.gov/catalog/item/6217206ad34ec739b2dbf592) | Height above ground of the highest first return, Salida only | Baked once by `scripts/lidar/`, shipped as `lidar/salida/*.png` | Flown 2019 or 2020 (sources disagree); buildings and trees unlabelled; trees solid | Ground points vs ground model, median gap 0.00 m |
 | USGS 3D Elevation Program lidar on AWS, [registry.opendata.aws/usgs-lidar](https://registry.opendata.aws/usgs-lidar/), Entwine copies by Hobu; flight index from [hobuinc/usgs-lidar](https://github.com/hobuinc/usgs-lidar) | Points of the flight over the pin, streamed (*Lidar from USGS, live*) | Browser fetch from `s3-us-west-2.amazonaws.com/usgs-lidar-public/<flight>/`, unpacked with laz-perf in the worker | Ground from the flight's own ground points; 600 m round the pin; 9 MB to 150 m, 38 MB to 600 m in Salida | Same pin, baked and streamed side by side: same reading, Behind the ridge ~4:26 PM |
 | [astronomy-engine](https://github.com/cosinekitty/astronomy), Don Cross, MIT | Rise and set times and azimuths for sun and moon | npm package, runs offline in the browser (`src/astro.ts`) | — | Not checked against a published almanac in this repo |
+| [Photon](https://github.com/komoot/photon), komoot, Apache-2.0, over OpenStreetMap data (ODbL); public server [photon.komoot.io](https://photon.komoot.io) | Place names for the search in Setup | `photon.komoot.io/api/?q=…&lat=…&lon=…`, one request per search sent, never as you type (`src/search/place.ts`) | The public server asks for fair use and throttles heavy users; no promise it stays up. Names are only what OpenStreetMap holds | "herks" near Salida, 2026-11-24: Herks Werks first |
 | [OpenFreeMap](https://openfreemap.org/), OSM data | Basemap tiles and the landcover layer the forest check reads | `tiles.openfreemap.org/styles/liberty` | — | — |
 | [MapLibre GL JS](https://maplibre.org/), BSD-3-Clause | The map | npm package | — | — |
 
@@ -247,6 +248,16 @@ Denver, downtown (39.74860, −104.99950), unthrottled: flight CO_DRCOG_2_2020 f
 **Is it worth it.** On a good phone connection the first useful answer, 150 m round, takes about half a minute and 9 MB; the full 600 m about a minute and 38 MB, against 2.3 MB for the whole baked town. Fine for a look from where he stands, and it works anywhere a flight covers with nothing baked; too heavy to be the default on a phone data plan, and too slow for walking with the pin following him. The bake stays the better answer for a town he uses often.
 
 Not done: the reading's ground from the 1 m bare-ground model (only the bake has it); a set reach other than 600 m; keeping a stream when the pin moves a few metres (it starts again).
+
+## Place search
+
+Jimmy, in a session on 2026-11-24: "can we add a location search first right now?"
+
+The **Where** row of Setup is a search field: type a place and press Find (or the keyboard's search key). One answer moves the pin there; several are listed as name and a short where (street, town, county, state), and a tap on one moves the pin. Pasted coordinates ("38.51748, -106.07600", "38.5°N 106.1°W") move the pin without asking anyone. Setup opens on a first visit, so the field is the first thing a new visitor sees. The map, the pin and *Use my location* work as before, on the line under it.
+
+Names come from Photon (*Data sources*), with places near the middle of the map ranked first. Nominatim was tried first and dropped: it matches whole words only, so "herks" found a stream in Germany, where Photon puts Herks Werks first. The search goes out once per Find, never as you type, which is fair use of a free public server.
+
+Not done: search as you type; a search field on the map itself; remembering past searches.
 
 ## Loading faster
 
