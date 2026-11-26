@@ -13,7 +13,7 @@ import { EVENT_KINDS, bodyPosition, nextEvents, obstructionEffect, type EventKin
 import { flatDistanceM, type LatLon } from "./geo";
 import { repairBasemapStyle } from "./render/basemap";
 import { clearHeatmap, renderHeatmap, type ScorePoint } from "./render/heatmap";
-import { circleAzimuths, pathMeets, rayIndex, relDeg, renderSkylineView, type CircleSkyline, type PathPoint, type SkyPath } from "./render/view";
+import { circleAzimuths, meetRay, meetWord, pathMeets, rayIndex, relDeg, renderSkylineView, type CircleSkyline, type PathPoint, type SkyPath } from "./render/view";
 import { fetchBuildingsBox, type BuildingGrid, type Box } from "./search/buildings";
 import { nameSkylinePoints } from "./search/horizonFeature";
 import { lidarTownAt } from "./search/lidar";
@@ -310,11 +310,16 @@ interface Skyline extends CircleSkyline {
 }
 let sky: Skyline | null = null;
 let path: SkyPath | null = null;
-let meet: { point: PathPoint; unknown: boolean } | null = null;
+/** `hidden`: under the skyline the whole path, `point` then the flat event's. */
+let meet: { point: PathPoint; unknown: boolean; hidden?: boolean } | null = null;
 let facing = 0;
 let picked: number | null = null;
 /** OpenStreetMap's name for what the path meets, once asked. */
 let meetName: string | null = null;
+/** The ray and its kind that `meetName` was asked for; a soft re-read that changes it names again. */
+let meetKey = "";
+/** Bumped by every full read (new pin, event, date or eye height), so a name asked for before it is never kept. */
+let meetGen = 0;
 let skySeq = 0;
 const FOV_DEG = 70;
 
@@ -334,7 +339,7 @@ function drawView(): void {
       fovDeg: FOV_DEG,
       colour: PATH_COLOURS[state.kind],
       fmt: (d) => timeFmt.format(d),
-      meet: meet && !meet.unknown ? meet.point : null,
+      meet: meet && !meet.unknown && !meet.hidden ? meet.point : null,
       picked,
       now: new Date(),
     }) +
@@ -361,10 +366,14 @@ function renderReading(note?: string): void {
     readingEl.innerHTML = `<span class="main gu">Terrain didn't load toward the ${LABEL[state.kind].toLowerCase()}</span> <span class="sub">flat ${flat}</span>`;
     return;
   }
+  if (meet.hidden) {
+    const what = meetName ? escapeHtml(meetName) : meetWord(sky, meet.point.azDeg);
+    readingEl.innerHTML = `<span class="main g0">Behind ${what} all the way ${rising() ? "up" : "down"}: no ${LABEL[state.kind].toLowerCase()} seen here</span> <span class="sub">flat ${flat}${moon}</span>`;
+    return;
+  }
   const t = meet.point.time;
   const mins = Math.round((rising() ? +t - +ev.time : +ev.time - +t) / 60_000);
-  const i = rayIndex(meet.point.azDeg);
-  const what = meetName ? escapeHtml(meetName) : sky.what[i] === "lidar" ? "a roof or tree" : "the ridge";
+  const what = meetName ? escapeHtml(meetName) : meetWord(sky, meet.point.azDeg);
   const word = rising() ? "Over" : "Behind";
   const delta = mins > 0 ? ` (${rising() ? "+" : "−"}${mins} min)` : "";
   const grade = mins <= 5 ? "g4" : mins <= 15 ? "g3" : mins <= 30 ? "g1" : "g0";
@@ -378,6 +387,7 @@ async function readSkyline(soft = false): Promise<void> {
     sky = null;
     meet = null;
     meetName = null;
+    meetGen++;
     picked = null;
     blockerEl.textContent = "";
     drawBlocker(null, "", null);
@@ -414,11 +424,25 @@ async function readSkyline(soft = false): Promise<void> {
     if (streaming() && live.reachM > 0) mark(`skyline ${live.reachM} m`);
     sky = { angles: reply.result.angles, what: reply.result.what, r: reply.result, loc, reachM };
     const m = pathMeets(sky, path);
-    meet = m ? { point: m.unknown ? m.point : refineMeet(sky, path, m.index), unknown: m.unknown } : null;
+    meet = m ? { point: m.unknown || m.hidden ? m.point : refineMeet(sky, path, m.index), unknown: m.unknown, hidden: m.hidden } : null;
     facing = meet ? meet.point.azDeg : ev.azimuthDeg;
     renderReading();
     drawView();
-    if (meet && !meet.unknown && !soft) void nameAt(meet.point.azDeg, true);
+    // Named once per meeting ray: as streamed lidar reaches further the ray or
+    // its kind can change, and the old name would then contradict the reading.
+    const key = meet && !meet.unknown ? `${meetGen}:${meetRay(sky, meet.point.azDeg)}:${sky.what[meetRay(sky, meet.point.azDeg)]}` : "";
+    if (!soft || key !== meetKey) {
+      meetKey = key;
+      if (soft && meetName) {
+        meetName = null;
+        renderReading();
+      }
+      if (soft && !key && picked === null) {
+        blockerEl.textContent = ""; // the path is clear now: nothing to name
+        drawBlocker(null, "", null);
+      }
+      if (key && (!soft || picked === null)) void nameAt(meet!.point.azDeg, true);
+    }
   } catch (err) {
     console.error(err);
     if (seq === skySeq) renderReading("The terrain didn't load. Move the pin to try again.");
@@ -456,7 +480,8 @@ async function nameAt(azDeg: number, atMeet: boolean): Promise<void> {
   if (!sky) return;
   const seq = ++nameSeq;
   const s = sky;
-  const i = rayIndex(azDeg);
+  const i = atMeet ? meetRay(s, azDeg) : rayIndex(azDeg);
+  const key = meetKey; // a later re-read of the same meeting ray keeps this name
   const angle = s.angles[i];
   const to = { lat: s.r.lat[i], lon: s.r.lon[i] };
   const dist = s.r.distM[i];
@@ -469,7 +494,7 @@ async function nameAt(azDeg: number, atMeet: boolean): Promise<void> {
   }
   const say = (what: string, extra: string, ring: LatLon[] | null, mapLabel: string) => {
     if (seq !== nameSeq) return;
-    if (atMeet && mapLabel && s === sky) {
+    if (atMeet && mapLabel && key === meetKey) {
       meetName = mapLabel; // the reading names it too
       renderReading();
     }

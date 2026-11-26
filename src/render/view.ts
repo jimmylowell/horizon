@@ -55,25 +55,63 @@ export function rayIndex(azDeg: number, n = VIEW_RAYS): number {
 }
 
 /**
+ * The ray that forms the skyline at a meeting bearing: of the two rays either
+ * side, the higher, since the disc meets the line between them because of it.
+ * The nearer ray can be the far ridge just past a near wall's edge
+ * (docs/design.md, *What is in the way*). An unknown ray loses to a known one.
+ */
+export function meetRay(s: CircleSkyline, azDeg: number): number {
+  const n = s.angles.length;
+  const f = ((((azDeg % 360) + 360) % 360) / 360) * n;
+  if (Math.abs(f - Math.round(f)) < 1e-9) return Math.round(f) % n; // on a ray
+  const a = Math.floor(f) % n;
+  const b = (a + 1) % n;
+  const x = s.angles[a];
+  const y = s.angles[b];
+  if (!Number.isFinite(y)) return a;
+  if (!Number.isFinite(x)) return b;
+  return y > x ? b : a;
+}
+
+/** What the reading calls the thing at a meeting bearing, before it has a name. */
+export function meetWord(s: CircleSkyline, azDeg: number): string {
+  return s.what[meetRay(s, azDeg)] === "lidar" ? "a roof or tree" : "the ridge";
+}
+
+/**
  * Where the disc meets the skyline: setting, the step after the last moment
  * its top edge is above it; rising, the first moment the top edge clears it.
- * `unknown` when the path crosses missing terrain on the way.
+ * `unknown` when the path crosses missing terrain on the way. `hidden` when
+ * the top edge is under the skyline at every point: there is no meeting, and
+ * the point given is the one nearest the flat event (top edge at 0°). Null
+ * only when the path is clear to its end.
  */
-export function pathMeets(s: CircleSkyline, path: SkyPath): { point: PathPoint; index: number; unknown: boolean } | null {
+export function pathMeets(
+  s: CircleSkyline,
+  path: SkyPath,
+): { point: PathPoint; index: number; unknown: boolean; hidden?: boolean } | null {
   const above = (p: PathPoint) => p.altDeg + p.radiusDeg > skyAt(s, p.azDeg);
   const pts = path.points;
+  const hidden = () => {
+    if (!pts.length) return null;
+    let index = 0;
+    pts.forEach((p, i) => {
+      if (Math.abs(p.altDeg + p.radiusDeg) < Math.abs(pts[index].altDeg + pts[index].radiusDeg)) index = i;
+    });
+    return { point: pts[index], index, unknown: false, hidden: true };
+  };
   if (path.rising) {
     for (let i = 0; i < pts.length; i++) {
       if (!Number.isFinite(skyAt(s, pts[i].azDeg))) return { point: pts[i], index: i, unknown: true };
       if (above(pts[i])) return { point: pts[i], index: i, unknown: false };
     }
-    return null;
+    return hidden();
   }
   for (let i = pts.length - 1; i >= 0; i--) {
     if (!Number.isFinite(skyAt(s, pts[i].azDeg))) return { point: pts[i], index: i, unknown: true };
     if (above(pts[i])) return i + 1 < pts.length ? { point: pts[i + 1], index: i + 1, unknown: false } : null;
   }
-  return null;
+  return hidden();
 }
 
 export interface ViewOptions {
