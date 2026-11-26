@@ -38,6 +38,8 @@ export default defineConfig({
   build: {
     // Vendor libraries in their own long-cached chunks (maplibre alone is ~800 kB).
     rollupOptions: {
+      // Two screens: the app, and Street View, which may hold no map (docs/design.md, *Street View*).
+      input: { main: path.resolve(process.cwd(), "index.html"), street: path.resolve(process.cwd(), "street.html") },
       output: {
         manualChunks: { maplibre: ["maplibre-gl"], astronomy: ["astronomy-engine"] },
       },

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content="The sun's and moon's paths and the terrain skyline drawn over Google Street View." />
+    <title>Horizon — sun and moon on Street View</title>
+    <link rel="icon" href="/favicon.ico" sizes="any">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  </head>
+  <body class="street">
+    <div id="chips" aria-label="Sun and moon crossings of the skyline"></div>
+    <div id="pic">
+      <div class="layer"></div>
+      <div class="layer"></div>
+      <canvas id="ov" aria-hidden="true"></canvas>
+      <div id="msg" role="status">Finding Street View…</div>
+    </div>
+    <div id="cap"></div>
+    <div id="bar">
+      <span id="clock"></span>
+      <input type="range" id="slider" min="0" max="1439" step="1" aria-label="Time of day" />
+      <div id="row2">
+        <input type="date" id="date" aria-label="Date" />
+        <button id="now" type="button">Now</button>
+        <span id="steps"></span>
+        <a id="back" href="./">Back</a>
+        <button id="what" type="button" aria-expanded="false" aria-label="What is this">?</button>
+      </div>
+    </div>
+    <section id="info" hidden>
+      <button id="close" type="button">Close</button>
+      <h2>What you are looking at</h2>
+      <p><b>The photo</b> is Google Street View, from the street-car panorama nearest the pin, shown as three views side by side so it is wide without stretching the edges. Straight lines bend a little where the three meet; the skyline does not jump. Nothing to drag: tap a chip and the picture is framed on it. Step moves along the road.</p>
+      <p><b>Pink line:</b> the terrain skyline from the camera's spot, eye 2.5 m above the ground, worked out in your browser from <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">AWS Terrain Tiles</a> out to 120 km, with earth curvature and refraction, by the same reading as the skyline strip. It is not traced from the photo, and nobody lines it up by hand.</p>
+      <p><b>Orange and pale blue:</b> the sun's and moon's paths for the day, from <a href="https://github.com/cosinekitty/astronomy" target="_blank" rel="noopener">astronomy-engine</a>, a dot each hour. Solid above the skyline, faint below it. Discs are true size.</p>
+      <p><b>Up and down</b> are when the top edge crosses the skyline; "late" and "early" compare with a flat horizon. Times are in this device's time zone.</p>
+      <p><b>What the lines cannot know:</b> houses, trees, poles. That is what the photo is for: if the path meets a roof before it meets the pink line, the roof wins.</p>
+    </section>
+    <script type="module" src="/src/street/main.ts"></script>
+  </body>
+</html>

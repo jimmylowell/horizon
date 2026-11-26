@@ -91,7 +91,11 @@ function writeHash(): void {
   const date = state.date && state.date !== todayStr() ? `,${state.date}` : "";
   const eye = state.eyeFt > EYE_MIN_FT ? `,eye=${state.eyeFt}` : "";
   const stream = state.stream && lidarTownAt(state.loc) ? ",stream" : "";
-  history.replaceState(null, "", `#${state.loc.lat.toFixed(5)},${state.loc.lon.toFixed(5)},${state.kind},${state.mode},${state.radius}${date}${eye}${stream}`);
+  const hash = `${state.loc.lat.toFixed(5)},${state.loc.lon.toFixed(5)},${state.kind},${state.mode},${state.radius}${date}${eye}${stream}`;
+  history.replaceState(null, "", `#${hash}`);
+  // The Street View screen opens on this pin and date, and its Back returns here (docs/design.md, *Street View*).
+  const streetEl = document.getElementById("street-open") as HTMLAnchorElement | null;
+  if (streetEl) streetEl.href = `street.html?back=${encodeURIComponent(hash)}#${state.loc.lat.toFixed(5)},${state.loc.lon.toFixed(5)},${state.date || todayStr()}`;
 }
 readHash();
 
